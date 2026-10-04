@@ -4,7 +4,25 @@ const LOOPBACK_HOST = '127.0.0.1';
 
 // コンテナ内ではユーザー名前空間が使えないため --no-sandbox が必要。
 // Cloud Run の /dev/shm は小さいため --disable-dev-shm-usage で /tmp を使わせる。
-const BASE_ARGS = ['--no-sandbox', '--disable-dev-shm-usage', '--lang=ja-JP'];
+export const BASE_ARGS = [
+  '--no-sandbox',
+  '--disable-dev-shm-usage',
+  '--lang=ja-JP',
+];
+
+/** Chromium arguments that force every connection through the local egress proxy and close the bypass paths (Playwright 経由でも素の起動でも共通)。 */
+export function guardArgs(proxyPort: number): string[] {
+  return [
+    `--proxy-server=http://${LOOPBACK_HOST}:${proxyPort}`,
+    // 既定ではループバックとリンクローカルがプロキシを迂回するため、迂回対象を空にする
+    '--proxy-bypass-list=<-loopback>',
+    // プロキシ経由の通信では Chromium 自身に名前解決させず、迂回した直接接続も失敗させる
+    `--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE ${LOOPBACK_HOST}`,
+    // UDP を使う QUIC / WebRTC はプロキシを迂回できるため無効にする
+    '--disable-quic',
+    '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
+  ];
+}
 
 export interface GuardedBrowserOptions {
   args?: readonly string[];
@@ -19,17 +37,6 @@ export async function launchGuardedBrowser(
   return chromium.launch({
     headless: false,
     ignoreDefaultArgs: options.ignoreDefaultArgs,
-    args: [
-      ...BASE_ARGS,
-      ...(options.args ?? []),
-      `--proxy-server=http://${LOOPBACK_HOST}:${proxyPort}`,
-      // 既定ではループバックとリンクローカルがプロキシを迂回するため、迂回対象を空にする
-      '--proxy-bypass-list=<-loopback>',
-      // プロキシ経由の通信では Chromium 自身に名前解決させず、迂回した直接接続も失敗させる
-      `--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE ${LOOPBACK_HOST}`,
-      // UDP を使う QUIC / WebRTC はプロキシを迂回できるため無効にする
-      '--disable-quic',
-      '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
-    ],
+    args: [...BASE_ARGS, ...(options.args ?? []), ...guardArgs(proxyPort)],
   });
 }

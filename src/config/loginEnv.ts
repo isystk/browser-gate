@@ -9,6 +9,9 @@ export type OAuthSettings =
 export type StoreSettings =
   { kind: 'gcs'; bucket: string } | { kind: 'local'; dir: string };
 
+/** ログイン用ブラウザの方式。plain は Playwright/CDP なしの素の Chromium（閉じた後に取り込む）、playwright は従来方式。 */
+export type LoginBrowserMode = 'playwright' | 'plain';
+
 export interface LoginEnv {
   publicBaseUrl: string;
   allowedEmails: string[];
@@ -19,6 +22,7 @@ export interface LoginEnv {
   novncDir: string;
   /** noVNC の接続が全て切れてから、ログインセッションを自動破棄するまでの猶予。 */
   disconnectGraceMs: number;
+  browserMode: LoginBrowserMode;
 }
 
 export const NOVNC_PORT = 6080;
@@ -47,7 +51,15 @@ export function loadLoginEnv(
     disconnectGraceMs: parseDisconnectGraceMs(
       source.LOGIN_DISCONNECT_GRACE_SECONDS,
     ),
+    browserMode: parseBrowserMode(source.LOGIN_BROWSER_MODE),
   };
+}
+
+function parseBrowserMode(raw: string | undefined): LoginBrowserMode {
+  const value = nonEmpty(raw);
+  if (value === undefined || value === 'playwright') return 'playwright';
+  if (value === 'plain') return 'plain';
+  throw new Error('LOGIN_BROWSER_MODE must be playwright or plain');
 }
 
 function parseDisconnectGraceMs(raw: string | undefined): number {

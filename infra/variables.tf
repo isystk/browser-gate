@@ -46,6 +46,17 @@ variable "budget_amount_jpy" {
   default     = 500
 }
 
+variable "login_browser_mode" {
+  description = "ログイン用ブラウザの方式。plain: Playwright/CDP なしの素の Chromium（閉じた後に Cookie 等を取り込む）、playwright: 従来方式。本番確認が済むまでは playwright が既定"
+  type        = string
+  default     = "playwright"
+
+  validation {
+    condition     = contains(["playwright", "plain"], var.login_browser_mode)
+    error_message = "login_browser_mode は playwright または plain を指定してください。"
+  }
+}
+
 variable "login_allowed_emails" {
   description = "ログイン画面（/login）に入れる Google アカウントのメールアドレス"
   type        = list(string)

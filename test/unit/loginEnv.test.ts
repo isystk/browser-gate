@@ -22,6 +22,30 @@ describe('loadLoginEnv', () => {
     };
   });
 
+  describe('login browser mode', () => {
+    it('defaults to the Playwright mode', () => {
+      expect(loadLoginEnv(source).browserMode).toBe('playwright');
+    });
+
+    it('can be switched to the plain mode', () => {
+      source.LOGIN_BROWSER_MODE = 'plain';
+
+      expect(loadLoginEnv(source).browserMode).toBe('plain');
+    });
+
+    it('treats an empty value as the default', () => {
+      source.LOGIN_BROWSER_MODE = '';
+
+      expect(loadLoginEnv(source).browserMode).toBe('playwright');
+    });
+
+    it('rejects an unknown mode', () => {
+      source.LOGIN_BROWSER_MODE = 'chrome';
+
+      expect(() => loadLoginEnv(source)).toThrow('LOGIN_BROWSER_MODE');
+    });
+  });
+
   describe('login disconnect grace', () => {
     it('defaults to 3 minutes', () => {
       expect(loadLoginEnv(source).disconnectGraceMs).toBe(180_000);

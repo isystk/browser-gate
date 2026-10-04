@@ -22,6 +22,10 @@ import { DEFAULT_EGRESS_POLICY } from '../security/urlGuard.js';
 import { createFakeGoogle } from './fakeGoogle.js';
 import { LoginService } from './loginService.js';
 import { LoginSessionManager } from './loginSessionManager.js';
+import {
+  PlainLoginSessionManager,
+  removeStaleLoginProfiles,
+} from './plainLoginSessionManager.js';
 import { SESSION_COOKIE_NAME, createLoginRoutes } from './routes.js';
 import { attachVncProxy, authorizeByCookie } from './vncProxy.js';
 
@@ -61,12 +65,7 @@ export function createLoginRuntime(deps: LoginRuntimeDeps): LoginRuntime {
     signer: new CookieSigner(randomBytes(SIGNING_SECRET_BYTES)),
     allowedEmails: env.allowedEmails,
   });
-  const sessions = new LoginSessionManager({
-    policy: DEFAULT_EGRESS_POLICY,
-    maxLifetimeMs: LOGIN_SESSION_MAX_LIFETIME_MS,
-    disconnectGraceMs: env.disconnectGraceMs,
-    logger,
-  });
+  const sessions = createSessionManager(env, logger);
   const loginService = new LoginService({
     getConfig: deps.getConfig,
     sessions,
@@ -125,4 +124,22 @@ function createObjectStore(env: LoginEnv): GcsObjectStore | LocalObjectStore {
   return env.store.kind === 'gcs'
     ? new GcsObjectStore(env.store.bucket)
     : new LocalObjectStore(env.store.dir);
+}
+
+function createSessionManager(
+  env: LoginEnv,
+  logger: Logger,
+): LoginSessionManager | PlainLoginSessionManager {
+  const options = {
+    policy: DEFAULT_EGRESS_POLICY,
+    maxLifetimeMs: LOGIN_SESSION_MAX_LIFETIME_MS,
+    disconnectGraceMs: env.disconnectGraceMs,
+    logger,
+  };
+  if (env.browserMode === 'plain') {
+    // 前のプロセスが残した一時プロファイルを掃除する（起動直後はセッションが無い）
+    void removeStaleLoginProfiles().catch(() => undefined);
+    return new PlainLoginSessionManager(options);
+  }
+  return new LoginSessionManager(options);
 }

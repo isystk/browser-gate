@@ -17,8 +17,16 @@ RUN npm ci
 COPY tsconfig.json tsconfig.build.json eslint.config.js vitest.config.ts .prettierrc.json .prettierignore ./
 COPY src ./src
 COPY docker/novnc ./docker/novnc
+COPY docker/chromium-policy.json ./docker/chromium-policy.json
 COPY test ./test
 RUN npm run build
+
+# Chrome for Testing が読む管理ポリシー（パスは Chrome for Testing 固有）。
+# RestoreOnStartup: セッション Cookie をプロファイルに残し、閉じた後の取り込みで読めるようにする（ログイン用の素の Chromium）。
+# URLBlocklist / DownloadRestrictions: 素の Chromium では Playwright のリクエストフィルタが使えないため、file:// とダウンロードを禁止する。
+RUN mkdir -p /etc/opt/chrome_for_testing/policies/managed \
+  && cp /app/docker/chromium-policy.json /etc/opt/chrome_for_testing/policies/managed/browser-gate.json \
+  && chmod 644 /etc/opt/chrome_for_testing/policies/managed/browser-gate.json
 
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \

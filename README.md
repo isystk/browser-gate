@@ -145,6 +145,7 @@ make down     # 停止
 - login: http://localhost:8081/healthz
 - ログイン画面: http://localhost:8081/login?profile=<名前>（`localhost` で開くこと。`127.0.0.1` では開けません）。`config/local.json` の `profiles` に登録済みの名前だけ開けます。`make up` は `.env` に暗号鍵・許可メール・フェイクOAuth（`OAUTH_FAKE=1`。Google の代わりにメールアドレスを入力するローカル専用画面）を不足分だけ追記します。実際の Google OAuth を試すときは `OAUTH_FAKE` を空にして `OAUTH_CLIENT_JSON` を設定します。
 - 保存したプロファイルはローカルでは Docker ボリューム `login-profiles`（`/data/profiles`）に暗号化されて保存されます。取得用（api）も同じボリュームを読み取り専用で参照します。ローカルで `profile` 指定の取得を試すには、`make keys-grant ID=<名前> PROFILE=<プロファイル名>` でキーに許可を付けてください。
+- ログイン用ブラウザの方式は環境変数 `LOGIN_BROWSER_MODE` で切り替えます。既定（空）は従来の Playwright 方式。`plain` にすると、ログイン中は Playwright/CDP なしの素の Chromium を起動し（Cloudflare Turnstile 対策）、「保存して終了」でブラウザを閉じてから同じプロファイルを Playwright で開いて Cookie 等を取り込みます。本番は Terraform の変数 `login_browser_mode`。`plain` では Chromium の管理ポリシー（`docker/chromium-policy.json`。セッション Cookie の保持、`file://` とダウンロードの禁止）がイメージに入り、人がブラウザを閉じてもセッションは残って「保存して終了」で保存できます。
 - 設定は `config/local.json`（Git 管理外）。変更は再起動なしで反映されます。
 - ローカルのキー操作: `make keys-add ID=<名前>`（平文は一度だけ表示。`.env` など Git 管理外に保存）、`make keys-list`、`make keys-revoke ID=<名前>`。
 - `make test`（単体・結合）、`make lint`、`make typecheck`。すべて Docker 内で実行します。

@@ -1,0 +1,12 @@
+{
+  "RestoreOnStartup": 1,
+  "URLBlocklist": ["file://*", "view-source:*", "chrome://*", "devtools://*"],
+  "DownloadRestrictions": 3,
+  "BrowserSignin": 0,
+  "SyncDisabled": true,
+  "PasswordManagerEnabled": false,
+  "AutofillAddressEnabled": false,
+  "AutofillCreditCardEnabled": false,
+  "MetricsReportingEnabled": false,
+  "BackgroundModeEnabled": false
+}

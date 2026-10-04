@@ -37,7 +37,9 @@ describe('LoginService', () => {
   let holding: number;
   let holdingWhileSaving: boolean[];
   let active: LoginBrowserSession | undefined;
+  let requestedDomains: (readonly string[])[];
   let service: LoginService;
+  let logLines: string[];
 
   beforeEach(() => {
     saved = [];
@@ -45,14 +47,22 @@ describe('LoginService', () => {
     holding = 0;
     holdingWhileSaving = [];
     active = undefined;
+    requestedDomains = [];
+    logLines = [];
     const sessions: LoginSessionHost = {
       start: async (profile) => {
         active = {
           profile,
-          storageState: async () => ({
-            cookies: [cookie('www.example.com'), cookie('accounts.google.com')],
-            origins: [],
-          }),
+          storageState: async (allowedDomains) => {
+            requestedDomains.push(allowedDomains);
+            return {
+              cookies: [
+                cookie('www.example.com'),
+                cookie('accounts.google.com'),
+              ],
+              origins: [],
+            };
+          },
         };
         return active;
       },
@@ -79,7 +89,7 @@ describe('LoginService', () => {
           saved.push({ profile, data });
         },
       },
-      logger: createLogger(() => undefined),
+      logger: createLogger((line) => logLines.push(line)),
     });
   });
 
@@ -117,6 +127,34 @@ describe('LoginService', () => {
       droppedCookies: 1,
     });
     expect(ended).toBe(1);
+  });
+
+  it('logs which cookies were kept and dropped without their values', async () => {
+    await service.openSession('news');
+
+    await service.saveSession();
+
+    const entry = JSON.parse(
+      logLines.find((line) => line.includes('profile_state_details')) ?? '{}',
+    ) as {
+      kept_cookies: { domain: string }[];
+      dropped_cookies: { domain: string }[];
+    };
+    expect(entry.kept_cookies.map((item) => item.domain)).toEqual([
+      'www.example.com',
+    ]);
+    expect(entry.dropped_cookies.map((item) => item.domain)).toEqual([
+      'accounts.google.com',
+    ]);
+    expect(logLines.join('\n')).not.toContain('"value"');
+  });
+
+  it('tells the session which domains are allowed so that it can collect their storage', async () => {
+    await service.openSession('news');
+
+    await service.saveSession();
+
+    expect(requestedDomains).toEqual([['example.com']]);
   });
 
   it('holds the session so that it is not discarded while saving, and releases it afterwards', async () => {

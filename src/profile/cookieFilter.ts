@@ -16,13 +16,23 @@ export interface StorageStateLike {
   origins: {
     origin: string;
     localStorage: { name: string; value: string }[];
+    /** Playwright の storageState({ indexedDB: true }) が返す IndexedDB。中身は不透明なまま保存・復元する。 */
+    indexedDB?: IndexedDbLike[];
   }[];
+}
+
+/** IndexedDB の1データベース分。name 以外の構造（ストア・レコード）は Playwright に任せ、ここでは解釈しない。 */
+export interface IndexedDbLike {
+  name: string;
+  [key: string]: unknown;
 }
 
 export interface FilteredStorageState {
   state: StorageStateLike;
   droppedCookies: number;
   droppedOrigins: number;
+  /** 除外した Cookie 本体（値を含む）。ログへは describeCookies を通した形でだけ出す。 */
+  droppedCookieEntries: StorageStateLike['cookies'];
 }
 
 /**
@@ -43,6 +53,9 @@ export function filterStorageState(
     state: { cookies, origins },
     droppedCookies: state.cookies.length - cookies.length,
     droppedOrigins: state.origins.length - origins.length,
+    droppedCookieEntries: state.cookies.filter(
+      (cookie) => !cookies.includes(cookie),
+    ),
   };
 }
 

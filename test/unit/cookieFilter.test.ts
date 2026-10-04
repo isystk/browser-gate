@@ -118,3 +118,41 @@ describe('filterStorageState', () => {
     expect(state.cookies).toHaveLength(1);
   });
 });
+
+describe('filterStorageState with IndexedDB', () => {
+  it('keeps the IndexedDB data of allowed origins and drops that of other origins', () => {
+    const state: StorageStateLike = {
+      cookies: [],
+      origins: [
+        {
+          origin: 'https://www.example.com',
+          localStorage: [],
+          indexedDB: [{ name: 'db' }],
+        },
+        {
+          origin: 'https://other.org',
+          localStorage: [],
+          indexedDB: [{ name: 'db' }],
+        },
+      ],
+    };
+
+    const result = filterStorageState(state, ['example.com']);
+
+    expect(result.state.origins).toEqual([state.origins[0]]);
+    expect(result.droppedOrigins).toBe(1);
+  });
+
+  it('returns the dropped cookies so that they can be described', () => {
+    const state: StorageStateLike = {
+      cookies: [cookie('example.com', 'kept'), cookie('other.org', 'gone')],
+      origins: [],
+    };
+
+    const result = filterStorageState(state, ['example.com']);
+
+    expect(result.droppedCookieEntries.map((item) => item.name)).toEqual([
+      'gone',
+    ]);
+  });
+});
