@@ -22,6 +22,7 @@ const storageStateSchema = z.object({
     z.object({
       origin: z.string(),
       localStorage: z.array(z.object({ name: z.string(), value: z.string() })),
+      indexedDB: z.array(z.looseObject({ name: z.string() })).optional(),
     }),
   ),
 });

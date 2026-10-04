@@ -151,6 +151,11 @@ resource "google_cloud_run_v2_service" "login" {
         name  = "ALLOWED_EMAILS"
         value = join(",", var.login_allowed_emails)
       }
+      # ログイン用ブラウザの方式（plain / playwright）。切り替えは変数を変えて apply するだけで、切り戻しも同じ手順
+      env {
+        name  = "LOGIN_BROWSER_MODE"
+        value = var.login_browser_mode
+      }
       env {
         name  = "GCS_BUCKET"
         value = google_storage_bucket.profiles.name

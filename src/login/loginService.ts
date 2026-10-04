@@ -5,12 +5,17 @@ import {
   type StorageStateLike,
   filterStorageState,
 } from '../profile/cookieFilter.js';
+import {
+  describeCookies,
+  describeOrigins,
+} from '../profile/stateDiagnostics.js';
 import { assertLoginProfile } from '../security/loginProfile.js';
 
 /** ログイン用ブラウザの1セッション。 */
 export interface LoginBrowserSession {
   profile: string;
-  storageState(): Promise<StorageStateLike>;
+  /** allowedDomains は、localStorage まで読み出す対象のドメイン（素の Chromium 方式で、閉じた後に取り込むために使う）。 */
+  storageState(allowedDomains: readonly string[]): Promise<StorageStateLike>;
 }
 
 /** ログイン用ブラウザセッションの起動・取得・終了を担う。 */
@@ -71,9 +76,16 @@ export class LoginService {
     }
     const allowedDomains = await this.allowedDomainsOf(session.profile);
     const filtered = filterStorageState(
-      await session.storageState(),
+      await session.storageState(allowedDomains),
       allowedDomains,
     );
+    // 診断用。Cookie の値と localStorage / IndexedDB の中身は出さない（ドメイン・名前・属性・件数のみ）
+    this.deps.logger.info('profile_state_details', {
+      profile: session.profile,
+      kept_cookies: describeCookies(filtered.state.cookies),
+      dropped_cookies: describeCookies(filtered.droppedCookieEntries),
+      origins: describeOrigins(filtered.state.origins),
+    });
     await this.deps.profileStore.save(
       session.profile,
       Buffer.from(JSON.stringify(filtered.state)),

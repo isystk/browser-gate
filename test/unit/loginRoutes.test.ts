@@ -475,13 +475,13 @@ describe('login routes', () => {
       expect(objects.size).toBe(0);
     });
 
-    it('does not write the cookie values or the profile contents to the log', async () => {
+    it('does not write the cookie values or the profile contents to the log (domains and names are logged for diagnosis)', async () => {
       const cookie = await signedInCookie();
       await openSession(cookie);
 
       await saveRequest(cookie);
 
-      expect(logLines.join('\n')).not.toMatch(/sid|"v"|other\.org/);
+      expect(logLines.join('\n')).not.toMatch(/"v"|"value"/);
     });
   });
 

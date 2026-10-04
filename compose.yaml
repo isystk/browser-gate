@@ -37,6 +37,8 @@ services:
       PROFILE_STORE_DIR: /data/profiles
       # 切断後の自動破棄までの猶予（秒）。空なら既定の 180 秒
       LOGIN_DISCONNECT_GRACE_SECONDS: ${LOGIN_DISCONNECT_GRACE_SECONDS:-}
+      # ログイン用ブラウザの方式。plain で Playwright/CDP なしの素の Chromium、空なら従来方式（playwright）
+      LOGIN_BROWSER_MODE: ${LOGIN_BROWSER_MODE:-}
     volumes:
       - ./config:/app/config:ro
       - login-profiles:/data/profiles
