@@ -5,7 +5,7 @@ import {
   errors as playwrightErrors,
 } from 'playwright';
 
-import { launchFetchBrowser } from '../browser/launcher.js';
+import { launchGuardedBrowser } from '../browser/launcher.js';
 import { AppError } from '../lib/errors.js';
 import {
   type BlockedEvent,
@@ -56,7 +56,7 @@ export async function fetchPage(
   });
   let browser: Browser | undefined;
   try {
-    browser = await launchFetchBrowser(proxy.port);
+    browser = await launchGuardedBrowser(proxy.port);
     const context = await newGuardedContext(browser, deps.policy, (event) =>
       violations.push(event),
     );

@@ -122,7 +122,48 @@ resource "google_cloud_run_v2_service" "login" {
         name  = "MODE"
         value = "login"
       }
-      # noVNC（websockify）は NOVNC_LISTEN の既定どおり 127.0.0.1 のみで待ち受ける。外部へは公開しない。
+      env {
+        name  = "CONFIG_PATH"
+        value = local.config_mount_path
+      }
+      # OAuth のリダイレクトURI（<この値>/oauth/callback）と Origin 検査の基準。Cloud Run の決定的なURLを固定で使う。
+      env {
+        name  = "PUBLIC_BASE_URL"
+        value = local.login_public_url
+      }
+      env {
+        name  = "ALLOWED_EMAILS"
+        value = join(",", var.login_allowed_emails)
+      }
+      env {
+        name  = "GCS_BUCKET"
+        value = google_storage_bucket.profiles.name
+      }
+      # 値は Terraform に書かず、Secret Manager の最新バージョンを実行時に参照する。
+      env {
+        name = "PROFILE_ENCRYPTION_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.this["profile_encryption"].secret_id
+            version = "latest"
+          }
+        }
+      }
+      env {
+        name = "OAUTH_CLIENT_JSON"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.this["oauth_client"].secret_id
+            version = "latest"
+          }
+        }
+      }
+      # noVNC（websockify）はコンテナ内の 127.0.0.1 のみで待ち受ける。外部へは OAuth 認証済みの利用者だけにアプリが中継する。
+
+      volume_mounts {
+        name       = "config"
+        mount_path = local.config_mount_dir
+      }
 
       startup_probe {
         http_get {
@@ -131,6 +172,17 @@ resource "google_cloud_run_v2_service" "login" {
         period_seconds    = 5
         timeout_seconds   = 3
         failure_threshold = 12
+      }
+    }
+
+    volumes {
+      name = "config"
+      secret {
+        secret = google_secret_manager_secret.this["config"].secret_id
+        items {
+          version = "latest"
+          path    = local.config_file_name
+        }
       }
     }
   }
@@ -142,4 +194,13 @@ resource "google_cloud_run_v2_service" "login" {
       client_version,
     ]
   }
+
+  # シークレットの有効なバージョン（値の登録）と実行用 SA の権限が揃ってからリビジョンを作る。
+  depends_on = [
+    google_secret_manager_secret_version.config_initial,
+    google_secret_manager_secret_iam_member.login_config,
+    google_secret_manager_secret_iam_member.login_profile_encryption,
+    google_secret_manager_secret_iam_member.login_oauth_client,
+    google_storage_bucket_iam_member.login_profiles,
+  ]
 }

@@ -7,6 +7,8 @@ TF_RUN := $(DOCKER_CMD) run --rm --user $$(id -u):$$(id -g) terraform
 GCP_PROJECT ?= isystk
 GCP_REGION ?= asia-northeast1
 CONFIG_SECRET := browser-gate-config
+ENCRYPTION_KEY_SECRET := browser-gate-profile-encryption-key
+OAUTH_CLIENT_SECRET := browser-gate-oauth-client
 KEYS_RUN := $(DOCKER_CMD) run --rm --no-deps --user $$(id -u):$$(id -g) -e HOME=/tmp keys
 # 本番用: config/prod.json を対象にする。出力を変数へ取り込むため -T（TTY なし）にする。
 PROD_KEYS_RUN := $(DOCKER_CMD) run --rm -T --no-deps --user $$(id -u):$$(id -g) -e HOME=/tmp -e CONFIG_PATH=/app/config/prod.json keys
@@ -23,9 +25,16 @@ help: ## ヘルプを表示します。
 	@echo "Available commands:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "} {printf "%-20s %s\n", $$1, $$2}'
 
+.PHONY: env-login
+env-login: ## .env にログイン用のローカル設定（暗号鍵・許可メール・フェイクOAuth）を不足分だけ追記します。
+	@touch .env; chmod 600 .env
+	@grep -q '^PROFILE_ENCRYPTION_KEY=.' .env || { echo "PROFILE_ENCRYPTION_KEY=$$(openssl rand -base64 32)" >> .env; echo ".env にローカル用の暗号鍵を追記しました"; }
+	@for name in ALLOWED_EMAILS OAUTH_FAKE; do grep -q "^$$name=" .env || { grep "^$$name=" .env.example >> .env; echo ".env に $$name を追記しました"; }; done
+
 .PHONY: init
 init: ## .env と config/local.json を見本から作成し、イメージをビルドします。
 	@if [ ! -f .env ]; then cp .env.example .env; echo ".env を作成しました"; fi
+	@$(MAKE) --no-print-directory env-login
 	@if [ ! -f config/local.json ]; then cp config/local.example.json config/local.json; echo "config/local.json を作成しました"; fi
 	$(DOCKER_CMD) build
 
@@ -34,7 +43,7 @@ build: ## Dockerイメージをビルドします。
 	$(DOCKER_CMD) build
 
 .PHONY: up
-up: ## api / login を起動します（noVNC は http://localhost:6080）。
+up: env-login ## api / login を起動します（ログイン画面は http://localhost:8081/login?profile=<名前>）。
 	$(DOCKER_CMD) up -d --build
 
 .PHONY: down
@@ -96,6 +105,16 @@ prod-config-pull: ## 本番の最新設定JSONを config/prod.json に取得し�
 prod-config-push: ## config/prod.json を本番の設定JSONとして新バージョン登録します（本番反映）。
 	@test -f config/prod.json || { echo "config/prod.json がありません"; exit 1; }
 	gcloud secrets versions add $(CONFIG_SECRET) --project $(GCP_PROJECT) --data-file=config/prod.json
+
+.PHONY: prod-login-key-init
+prod-login-key-init: ## 本番のプロファイル暗号鍵を生成して Secret Manager に登録します（未登録の場合のみ。値は表示しません）。
+	@if gcloud secrets versions list $(ENCRYPTION_KEY_SECRET) --project $(GCP_PROJECT) --limit 1 --format='value(name)' | grep -q .; then echo "$(ENCRYPTION_KEY_SECRET) は登録済みです（鍵を変えると保存済みプロファイルが復号できなくなるため上書きしません）"; exit 1; fi
+	@openssl rand -base64 32 | tr -d '\n' | gcloud secrets versions add $(ENCRYPTION_KEY_SECRET) --project $(GCP_PROJECT) --data-file=-
+
+.PHONY: prod-oauth-client-set
+prod-oauth-client-set: ## OAuth クライアント情報（JSON ファイル）を Secret Manager に登録します（例: make prod-oauth-client-set FILE=~/client_secret.json）。
+	@test -f "$(FILE)" || { echo "FILE を指定してください（Google コンソールからダウンロードした JSON、または {\"client_id\":...,\"client_secret\":...}）"; exit 1; }
+	gcloud secrets versions add $(OAUTH_CLIENT_SECRET) --project $(GCP_PROJECT) --data-file="$(FILE)"
 
 .PHONY: prod-keys-add
 prod-keys-add: ## 本番APIキーを発行して反映します（例: make prod-keys-add ID=musashi。キーは画面に出さず ~/.config/browser-gate/prod-keys に保存）。

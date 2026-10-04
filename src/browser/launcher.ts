@@ -1,28 +1,27 @@
 import { type Browser, chromium } from 'playwright';
 
-const START_URL = 'about:blank';
 const LOOPBACK_HOST = '127.0.0.1';
 
 // コンテナ内ではユーザー名前空間が使えないため --no-sandbox が必要。
 // Cloud Run の /dev/shm は小さいため --disable-dev-shm-usage で /tmp を使わせる。
 const BASE_ARGS = ['--no-sandbox', '--disable-dev-shm-usage', '--lang=ja-JP'];
 
-/** ヘッドフル Chromium を Xvfb 上に起動し、noVNC から操作できる状態にする。 */
-export async function launchHeadfulBrowser(): Promise<void> {
-  const browser = await chromium.launch({
-    headless: false,
-    args: BASE_ARGS,
-  });
-  const page = await browser.newPage();
-  await page.goto(START_URL);
+export interface GuardedBrowserOptions {
+  args?: readonly string[];
+  ignoreDefaultArgs?: string[];
 }
 
 /** Launches a headful Chromium whose every connection is forced through the local egress proxy. */
-export async function launchFetchBrowser(proxyPort: number): Promise<Browser> {
+export async function launchGuardedBrowser(
+  proxyPort: number,
+  options: GuardedBrowserOptions = {},
+): Promise<Browser> {
   return chromium.launch({
     headless: false,
+    ignoreDefaultArgs: options.ignoreDefaultArgs,
     args: [
       ...BASE_ARGS,
+      ...(options.args ?? []),
       `--proxy-server=http://${LOOPBACK_HOST}:${proxyPort}`,
       // 既定ではループバックとリンクローカルがプロキシを迂回するため、迂回対象を空にする
       '--proxy-bypass-list=<-loopback>',

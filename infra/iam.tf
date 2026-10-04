@@ -24,8 +24,26 @@ resource "google_secret_manager_secret_iam_member" "login_config" {
   member    = "serviceAccount:${google_service_account.login.email}"
 }
 
-# Phase 2 の匿名取得は GCS・暗号鍵・OAuth・Slack を使わないため、これらへの権限は付与しない。
-# Phase 3 / 4 で必要になった時点で、対象バケット・対象シークレットに限定して追加する。
+# login（Phase 3）: プロファイル暗号鍵・OAuth クライアント情報の読み取りと、プロファイル用バケットへの保存だけを許可する。
+# Slack Webhook（Phase 4）への権限は Phase 4 で追加する。api には GCS・暗号鍵・OAuth の権限を付与しない。
+resource "google_secret_manager_secret_iam_member" "login_profile_encryption" {
+  secret_id = google_secret_manager_secret.this["profile_encryption"].id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.login.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "login_oauth_client" {
+  secret_id = google_secret_manager_secret.this["oauth_client"].id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.login.email}"
+}
+
+# 作成・上書き（既存オブジェクトの置換には delete 権限が必要）・読み取りができる。対象はこのバケットのみ。
+resource "google_storage_bucket_iam_member" "login_profiles" {
+  bucket = google_storage_bucket.profiles.name
+  role   = "roles/storage.objectUser"
+  member = "serviceAccount:${google_service_account.login.email}"
+}
 
 # --- 公開設定 ---
 # 取得APIはアプリ側の APIキー認証（Bearer）で守るため、Cloud Run の IAM 認証は要求しない（要件定義 #8）。
@@ -36,7 +54,7 @@ resource "google_cloud_run_v2_service_iam_member" "api_public" {
   member   = "allUsers"
 }
 
-# ログイン用は Phase 3（OAuth）実装まで未認証の呼び出しを許可しない。
+# ログイン用は未認証で到達できるが、アプリ側で Google OAuth と許可メールアドレスにより守る（要件定義 #8）。
 resource "google_cloud_run_v2_service_iam_member" "login_public" {
   count    = var.login_public_access ? 1 : 0
   name     = google_cloud_run_v2_service.login.name

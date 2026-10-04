@@ -8,6 +8,9 @@ import type { Logger } from './lib/logger.js';
 
 export interface AppDeps {
   fetchService?: FetchService;
+  loginRoutes?: Hono;
+  /** ローカル開発専用の Google 代替エンドポイント。本番では渡さない。 */
+  fakeGoogleRoutes?: Hono;
   logger: Logger;
 }
 
@@ -19,6 +22,13 @@ export function createApp(mode: AppMode, deps: AppDeps): Hono {
   app.get('/healthz', (c) => c.json({ status: 'ok', mode }));
   if (mode === 'api' && deps.fetchService !== undefined) {
     app.route('/', createFetchRoutes(deps.fetchService));
+  }
+  // フェイク Google は公開URL以外のホスト（自己呼び出し）から呼ばれるため、ホスト検査を行うログインルートより先に登録する
+  if (mode === 'login' && deps.fakeGoogleRoutes !== undefined) {
+    app.route('/', deps.fakeGoogleRoutes);
+  }
+  if (mode === 'login' && deps.loginRoutes !== undefined) {
+    app.route('/', deps.loginRoutes);
   }
   app.notFound((c) =>
     c.json(errorBody('INVALID_REQUEST', 'Not found'), NOT_FOUND_STATUS),
