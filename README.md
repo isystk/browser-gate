@@ -9,12 +9,13 @@ Bot 対策（自動アクセスを弾く仕組み）が入った Web サイト�
 | 機能 | 状態 |
 |---|---|
 | 匿名取得（ログインなしで URL を開き、本文・HTML・スクリーンショット・指定部分の抜き出しを返す） | 本番稼働中 |
-| ログイン済みプロファイルでの取得（`profile` 指定） | 未実装（Phase 3・4 で対応予定。指定すると `INVALID_REQUEST` を返す） |
+| ログイン画面（noVNC で人が手動ログインし、Cookie 等を暗号化して保存） | 実装済み（ローカルで動作確認済み。本番は Secret 登録・OAuth クライアント作成・apply 待ち） |
+| ログイン済みプロファイルでの取得（`profile` 指定） | 未実装（Phase 4 で対応予定。指定すると `INVALID_REQUEST` を返す） |
 
 用語の補足:
 
 - Cloud Run: Google Cloud のサーバー実行サービス。リクエストが来たときだけ動かせる。
-- noVNC: ブラウザの画面を Web 経由で見て操作する仕組み。ログイン作業用（Phase 3 以降で本番利用予定）。
+- noVNC: ブラウザの画面を Web 経由で見て操作する仕組み。ログイン作業用。外部へは直接公開せず、Google OAuth で認証された利用者にだけアプリが中継します。
 - Phase: 実装の段階。詳細は biz-ops 側の実装計画を参照。
 
 ## 2. クイックスタート（本番を試す）
@@ -139,7 +140,8 @@ make down     # 停止
 
 - api: http://localhost:8080/healthz
 - login: http://localhost:8081/healthz
-- noVNC: http://localhost:6080（ローカル PC からのみ接続可）
+- ログイン画面: http://localhost:8081/login?profile=<名前>（`localhost` で開くこと。`127.0.0.1` では開けません）。`config/local.json` の `profiles` に登録済みの名前だけ開けます。`make up` は `.env` に暗号鍵・許可メール・フェイクOAuth（`OAUTH_FAKE=1`。Google の代わりにメールアドレスを入力するローカル専用画面）を不足分だけ追記します。実際の Google OAuth を試すときは `OAUTH_FAKE` を空にして `OAUTH_CLIENT_JSON` を設定します。
+- 保存したプロファイルはローカルでは Docker ボリューム `login-profiles`（`/data/profiles`）に暗号化されて保存されます。
 - 設定は `config/local.json`（Git 管理外）。変更は再起動なしで反映されます。
 - ローカルのキー操作: `make keys-add ID=<名前>`（平文は一度だけ表示。`.env` など Git 管理外に保存）、`make keys-list`、`make keys-revoke ID=<名前>`。
 - `make test`（単体・結合）、`make lint`、`make typecheck`。すべて Docker 内で実行します。
@@ -171,7 +173,19 @@ make down     # 停止
 ### 公開設定
 
 - `browser-gate-api` は Cloud Run の IAM 認証なし（アプリ側の APIキー認証）。キーなし・誤ったキーは `UNAUTHORIZED`。
-- `browser-gate-login` は Phase 3（OAuth）まで未認証の呼び出しを許可しません（`login_public_access=false`）。
+- `browser-gate-login` は Cloud Run の IAM 認証なし（`login_public_access=true`）で、アプリ側で Google OAuth と許可メールアドレス（`login_allowed_emails`。既定 `ise0615@gmail.com`）により守ります。noVNC の WebSocket（`/ws`）も OAuth 済みの利用者だけが接続でき、websockify はコンテナ内部（127.0.0.1）のみで待ち受けます。
+- 公開URLは固定です（`terraform output login_page_url`）。別のURL（Cloud Run の自動URL）では開けません。
+
+### ログイン画面を本番で使う手順（初回のみ。順番どおり）
+
+1. OAuth クライアントを作る（Google Cloud コンソール > API とサービス > 認証情報 > OAuth クライアント ID > ウェブアプリ。同意画面は外部・テスト中でテストユーザーに許可メールを追加）。承認済みのリダイレクト URI に `terraform output -raw oauth_redirect_uri` の値と `http://localhost:8081/oauth/callback` を登録する。
+2. `make prod-login-key-init`（暗号鍵を生成して Secret Manager へ。値は表示されない。登録済みなら何もしない）。
+3. `make prod-oauth-client-set FILE=<ダウンロードした JSON>`。
+4. `make infra-plan` で内容を確認し、`make infra-apply`（上の2・3が済んでいないと login の新リビジョンを作れない）。
+5. 新しいイメージを `main` へ push または `make deploy` で反映する。
+6. `https://<login の公開URL>/login?profile=<名前>` を開く（プロファイル名は設定 JSON の `profiles` に登録済みであること。`make config-push` / `prod-config-push` で反映）。Google でログイン後、noVNC 上のブラウザで対象サイトにログインし、「保存して終了」を押す。
+- 保存されるのは、そのプロファイルの `allowed_domains`（許可ドメイン）に属する Cookie と localStorage だけです（それ以外は破棄）。`allowed_domains` が空のプロファイルは保存できません。
+- 暗号鍵を変更・紛失すると保存済みプロファイルは復号できなくなります（再ログインで作り直し）。
 
 ## 6. セキュリティの考え方
 
@@ -185,6 +199,7 @@ make down     # 停止
 | 症状 | 原因と対処 |
 |---|---|
 | 401（`UNAUTHORIZED`） | キーの誤り、失効済み、または発行直後の反映待ち（最大 10 秒）。少し待って再実行。`make prod-keys-list` で ID を確認 |
+| ログイン画面が 400（「公開URLで開いてください」） | `localhost`（ローカル）または固定の公開URL以外のホスト名で開いている |
 | 400（`INVALID_REQUEST`） | 項目名の誤り。特に `outputs` は複数形で、値は配列（例: `"outputs":["text"]`）。未知の項目や `profile` 指定も該当 |
 | 初回だけ遅い | Cloud Run のコールドスタート（停止中のインスタンスの起動待ち）。再実行すると速くなる。`prod-fetch` は最大 90 秒待つ |
 | `jq: command not found` | `prod-fetch` には `jq` が必要。インストールしてください |

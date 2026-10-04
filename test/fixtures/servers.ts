@@ -88,6 +88,9 @@ function route(req: http.IncomingMessage, res: http.ServerResponse): void {
       return html(res, ARTICLE_HTML);
     case '/scroll':
       return html(res, SCROLL_HTML);
+    case '/set-cookie':
+      res.setHeader('set-cookie', 'sid=fixture-session; Path=/');
+      return html(res, '<!doctype html><html><body>cookie set</body></html>');
     case '/redirect':
       res.writeHead(302, { location: url.searchParams.get('to') ?? '/' });
       return void res.end();

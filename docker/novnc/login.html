@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>browser-gate ログイン</title>
+    <link rel="stylesheet" href="/login/assets/login.css" />
+  </head>
+  <body data-profile="{{PROFILE}}">
+    <header>
+      <span class="profile">プロファイル: <strong>{{PROFILE}}</strong></span>
+      <span id="status" role="status"></span>
+      <button id="save" type="button">保存して終了</button>
+      <button id="cancel" type="button" class="secondary">中止</button>
+    </header>
+    <iframe
+      id="vnc"
+      title="ログイン用ブラウザ"
+      src="/novnc/vnc.html?autoconnect=true&amp;resize=scale&amp;reconnect=true&amp;path=ws"
+    ></iframe>
+    <script src="/login/assets/login.js"></script>
+  </body>
+</html>

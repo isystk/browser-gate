@@ -1,3 +1,5 @@
 dist
 node_modules
 package-lock.json
+config/local.json
+config/prod.json

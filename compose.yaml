@@ -23,10 +23,20 @@ services:
     container_name: browser-gate-login
     environment:
       MODE: login
-      NOVNC_LISTEN: 0.0.0.0
+      CONFIG_PATH: /app/config/local.json
+      PUBLIC_BASE_URL: http://localhost:${LOGIN_HOST_PORT:-8081}
+      ALLOWED_EMAILS: ${ALLOWED_EMAILS:-}
+      PROFILE_ENCRYPTION_KEY: ${PROFILE_ENCRYPTION_KEY:-}
+      # 実際の Google OAuth を試すときは OAUTH_FAKE を空にして OAUTH_CLIENT_JSON を設定する
+      OAUTH_FAKE: ${OAUTH_FAKE:-}
+      OAUTH_CLIENT_JSON: ${OAUTH_CLIENT_JSON:-}
+      PROFILE_STORE_DIR: /data/profiles
+    volumes:
+      - ./config:/app/config:ro
+      - login-profiles:/data/profiles
+    # noVNC（websockify）はコンテナ内の 127.0.0.1 のみ。ホストへ公開するのは OAuth 認証付きの 8080 だけ
     ports:
       - "127.0.0.1:${LOGIN_HOST_PORT:-8081}:8080"
-      - "127.0.0.1:${NOVNC_HOST_PORT:-6080}:6080"
 
   # 設定ファイルの管理CLI用（make keys-* から実行。通常の up では起動しない）
   keys:
@@ -60,3 +70,7 @@ services:
     volumes:
       - ./infra:/infra
       - ${HOME}/.config/gcloud/application_default_credentials.json:/gcloud/application_default_credentials.json:ro
+
+volumes:
+  # ローカルの暗号化済みプロファイル置き場（削除しない）
+  login-profiles:

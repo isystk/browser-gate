@@ -1,0 +1,57 @@
+html,
+body {
+  margin: 0;
+  height: 100%;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: #1f2937;
+  color: #f9fafb;
+}
+
+.profile {
+  margin-right: auto;
+}
+
+#status {
+  font-size: 14px;
+}
+
+button {
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 4px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: #4b5563;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+iframe {
+  flex: 1;
+  width: 100%;
+  border: 0;
+}
+
+iframe[hidden] {
+  display: none;
+}

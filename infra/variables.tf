@@ -29,9 +29,9 @@ variable "image_tag" {
 }
 
 variable "login_public_access" {
-  description = "browser-gate-login を未認証で呼び出せるようにするか。Phase 3 で OAuth 認証を実装するまでは false"
+  description = "browser-gate-login を Cloud Run の IAM 認証なしで呼び出せるようにするか。アプリ側の Google OAuth で守る（Phase 3）"
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "billing_account_id" {
@@ -44,4 +44,10 @@ variable "budget_amount_jpy" {
   description = "月次の予算額（円）"
   type        = number
   default     = 500
+}
+
+variable "login_allowed_emails" {
+  description = "ログイン画面（/login）に入れる Google アカウントのメールアドレス"
+  type        = list(string)
+  default     = ["ise0615@gmail.com"]
 }

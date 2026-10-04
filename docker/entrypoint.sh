@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# MODE=api: Xvfb + アプリ / MODE=login: Xvfb + x11vnc + websockify(noVNC) + アプリ
+# MODE=api: Xvfb + アプリ / MODE=login: Xvfb + x11vnc + websockify + アプリ
+# websockify は 127.0.0.1 のみで待ち受け、外部へは OAuth 認証済みの利用者だけにアプリ（Hono）が中継する
 set -euo pipefail
 
 MODE="${MODE:-api}"
@@ -7,8 +8,6 @@ DISPLAY="${DISPLAY:-:99}"
 SCREEN_GEOMETRY="${SCREEN_GEOMETRY:-1280x800x24}"
 VNC_PORT=5900
 NOVNC_PORT=6080
-# ローカルでコンテナ外から noVNC に接続する場合のみ 0.0.0.0 を指定する
-NOVNC_LISTEN="${NOVNC_LISTEN:-127.0.0.1}"
 export DISPLAY
 
 case "${MODE}" in
@@ -29,7 +28,7 @@ done
 
 if [ "${MODE}" = "login" ]; then
   x11vnc -display "${DISPLAY}" -localhost -rfbport "${VNC_PORT}" -forever -shared -nopw -quiet &
-  websockify --web /usr/share/novnc "${NOVNC_LISTEN}:${NOVNC_PORT}" "localhost:${VNC_PORT}" &
+  websockify "127.0.0.1:${NOVNC_PORT}" "localhost:${VNC_PORT}" &
 fi
 
 exec "$@"
