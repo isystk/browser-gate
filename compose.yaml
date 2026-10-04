@@ -12,6 +12,9 @@ services:
     container_name: browser-gate-api
     environment:
       MODE: api
+      CONFIG_PATH: /app/config/local.json
+    volumes:
+      - ./config:/app/config:ro
     ports:
       - "127.0.0.1:${API_HOST_PORT:-8080}:8080"
 
@@ -24,3 +27,20 @@ services:
     ports:
       - "127.0.0.1:${LOGIN_HOST_PORT:-8081}:8080"
       - "127.0.0.1:${NOVNC_HOST_PORT:-6080}:6080"
+
+  # 設定ファイルの管理CLI用（make keys-* から実行。通常の up では起動しない）
+  keys:
+    <<: *browser-gate
+    profiles:
+      - tools
+    restart: "no"
+    environment:
+      CONFIG_PATH: /app/config/local.json
+    volumes:
+      - ./config:/app/config
+    entrypoint:
+      - npm
+      - run
+      - --silent
+      - keys
+      - --

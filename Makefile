@@ -3,6 +3,7 @@ SHELL := /bin/bash
 
 DOCKER_CMD := docker compose
 NPM_RUN := $(DOCKER_CMD) run --rm --no-deps --entrypoint npm api
+KEYS_RUN := $(DOCKER_CMD) run --rm --no-deps --user $$(id -u):$$(id -g) -e HOME=/tmp keys
 
 .DEFAULT_GOAL := help
 
@@ -51,3 +52,29 @@ lint: build ## ESLint と Prettier のチェックを実行します。
 .PHONY: typecheck
 typecheck: build ## TypeScript の型チェックを実行します。
 	$(NPM_RUN) run typecheck
+
+.PHONY: test
+test: build ## 単体テストと結合テストを実行します（Xvfb 上の Chromium を使用）。
+	$(DOCKER_CMD) run --rm --no-deps api npm test
+
+.PHONY: test-unit
+test-unit: build ## 単体テストのみ実行します。
+	$(DOCKER_CMD) run --rm --no-deps --entrypoint npm api run test:unit
+
+.PHONY: keys-add
+keys-add: ## APIキーを発行します（例: make keys-add ID=musashi。キーは一度だけ表示）。
+	@test -n "$(ID)" || { echo "ID を指定してください（例: make keys-add ID=musashi）"; exit 1; }
+	$(KEYS_RUN) add --id "$(ID)"
+
+.PHONY: keys-list
+keys-list: ## APIキーの一覧を表示します。
+	$(KEYS_RUN) list
+
+.PHONY: keys-revoke
+keys-revoke: ## APIキーを失効します（例: make keys-revoke ID=musashi）。
+	@test -n "$(ID)" || { echo "ID を指定してください（例: make keys-revoke ID=musashi）"; exit 1; }
+	$(KEYS_RUN) revoke --id "$(ID)"
+
+.PHONY: format
+format: build ## Prettier で src / test を整形します。
+	$(DOCKER_CMD) run --rm --no-deps --user $$(id -u):$$(id -g) -e HOME=/tmp -v $(CURDIR)/src:/app/src -v $(CURDIR)/test:/app/test --entrypoint npx api prettier --write src test

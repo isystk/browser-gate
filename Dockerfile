@@ -14,8 +14,9 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-COPY tsconfig.json tsconfig.build.json eslint.config.js .prettierrc.json .prettierignore ./
+COPY tsconfig.json tsconfig.build.json eslint.config.js vitest.config.ts .prettierrc.json .prettierignore ./
 COPY src ./src
+COPY test ./test
 RUN npm run build
 
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh

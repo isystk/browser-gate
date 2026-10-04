@@ -12,5 +12,5 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src", "scripts", "test", "eslint.config.js"]
+  "include": ["src", "scripts", "test", "eslint.config.js", "vitest.config.ts"]
 }
