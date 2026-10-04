@@ -17,12 +17,18 @@ export interface LoginEnv {
   store: StoreSettings;
   uiDir: string;
   novncDir: string;
+  /** noVNC の接続が全て切れてから、ログインセッションを自動破棄するまでの猶予。 */
+  disconnectGraceMs: number;
 }
 
 export const NOVNC_PORT = 6080;
 
 const DEFAULT_UI_DIR = 'docker/novnc';
 const DEFAULT_NOVNC_DIR = '/usr/share/novnc';
+const MS_PER_SECOND = 1000;
+const DEFAULT_DISCONNECT_GRACE_SECONDS = 180;
+const MIN_DISCONNECT_GRACE_SECONDS = 10;
+const MAX_DISCONNECT_GRACE_SECONDS = 3600;
 const LOCAL_HOSTNAMES = ['localhost', '127.0.0.1'];
 
 /** Loads the login service settings from environment variables and throws on missing or unsafe values. Error messages never contain secret values. */
@@ -38,7 +44,27 @@ export function loadLoginEnv(
     store: parseStore(source, onCloudRun),
     uiDir: nonEmpty(source.LOGIN_UI_DIR) ?? DEFAULT_UI_DIR,
     novncDir: nonEmpty(source.NOVNC_DIR) ?? DEFAULT_NOVNC_DIR,
+    disconnectGraceMs: parseDisconnectGraceMs(
+      source.LOGIN_DISCONNECT_GRACE_SECONDS,
+    ),
   };
+}
+
+function parseDisconnectGraceMs(raw: string | undefined): number {
+  const value = nonEmpty(raw);
+  if (value === undefined) {
+    return DEFAULT_DISCONNECT_GRACE_SECONDS * MS_PER_SECOND;
+  }
+  const seconds = /^\d+$/.test(value) ? Number(value) : Number.NaN;
+  if (
+    !(seconds >= MIN_DISCONNECT_GRACE_SECONDS) ||
+    seconds > MAX_DISCONNECT_GRACE_SECONDS
+  ) {
+    throw new Error(
+      `LOGIN_DISCONNECT_GRACE_SECONDS must be an integer from ${MIN_DISCONNECT_GRACE_SECONDS} to ${MAX_DISCONNECT_GRACE_SECONDS}`,
+    );
+  }
+  return seconds * MS_PER_SECOND;
 }
 
 function parsePublicBaseUrl(raw: string | undefined): string {
@@ -108,7 +134,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function parseStore(
+export function parseStore(
   source: NodeJS.ProcessEnv,
   onCloudRun: boolean,
 ): StoreSettings {
@@ -128,6 +154,6 @@ function parseStore(
   return { kind: 'gcs', bucket };
 }
 
-function nonEmpty(value: string | undefined): string | undefined {
+export function nonEmpty(value: string | undefined): string | undefined {
   return value === undefined || value === '' ? undefined : value;
 }

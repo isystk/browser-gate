@@ -24,8 +24,22 @@ resource "google_secret_manager_secret_iam_member" "login_config" {
   member    = "serviceAccount:${google_service_account.login.email}"
 }
 
+# api（Phase 4 最小部分）: ログイン済みプロファイルを使った取得のため、プロファイル暗号鍵の読み取りと
+# プロファイル用バケットの読み取り専用アクセスだけを許可する（書き込み・削除は付与しない。Cookie 書き戻しは未実装）。
+resource "google_secret_manager_secret_iam_member" "api_profile_encryption" {
+  secret_id = google_secret_manager_secret.this["profile_encryption"].id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.api.email}"
+}
+
+resource "google_storage_bucket_iam_member" "api_profiles" {
+  bucket = google_storage_bucket.profiles.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.api.email}"
+}
+
 # login（Phase 3）: プロファイル暗号鍵・OAuth クライアント情報の読み取りと、プロファイル用バケットへの保存だけを許可する。
-# Slack Webhook（Phase 4）への権限は Phase 4 で追加する。api には GCS・暗号鍵・OAuth の権限を付与しない。
+# Slack Webhook（Phase 4）への権限は Phase 4 で追加する。api には OAuth の権限を付与しない。
 resource "google_secret_manager_secret_iam_member" "login_profile_encryption" {
   secret_id = google_secret_manager_secret.this["profile_encryption"].id
   role      = "roles/secretmanager.secretAccessor"

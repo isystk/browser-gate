@@ -64,6 +64,7 @@ export function createLoginRuntime(deps: LoginRuntimeDeps): LoginRuntime {
   const sessions = new LoginSessionManager({
     policy: DEFAULT_EGRESS_POLICY,
     maxLifetimeMs: LOGIN_SESSION_MAX_LIFETIME_MS,
+    disconnectGraceMs: env.disconnectGraceMs,
     logger,
   });
   const loginService = new LoginService({
@@ -92,6 +93,7 @@ export function createLoginRuntime(deps: LoginRuntimeDeps): LoginRuntime {
           (value) => authFlow.authenticate(value) !== undefined,
         ),
         hasActiveSession: () => sessions.current() !== undefined,
+        onClientConnected: () => sessions.clientConnected(),
         logger,
       }),
   };

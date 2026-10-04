@@ -1,16 +1,20 @@
 import { randomBytes } from 'node:crypto';
-import { chmod, mkdir, rename, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { Storage } from '@google-cloud/storage';
 
 import { parseProfileName } from '../security/loginProfile.js';
-import { encryptProfile } from './crypto.js';
+import { decryptProfile, encryptProfile } from './crypto.js';
 
-/** 名前を指定してバイト列を保存するストレージ。 */
+/** 名前を指定してバイト列を保存・読み取りするストレージ。 */
 export interface ObjectStore {
   put(name: string, data: Buffer): Promise<void>;
+  /** Returns the object, or undefined if it does not exist. Other failures throw. */
+  get(name: string): Promise<Buffer | undefined>;
 }
+
+const NOT_FOUND_HTTP_CODE = 404;
 
 const OBJECT_NAME_PATTERN =
   /^(?:[a-z0-9][a-z0-9_-]*\/)*[a-z0-9][a-z0-9_-]*\.enc$/;
@@ -36,6 +40,14 @@ export class ProfileStore {
     const name = profileObjectName(profile);
     await this.objects.put(name, encryptProfile(this.key, profile, plaintext));
   }
+
+  /** Reads and decrypts a profile. Returns undefined if it was never saved, and throws if the data cannot be decrypted. */
+  async load(profile: string): Promise<Buffer | undefined> {
+    const payload = await this.objects.get(profileObjectName(profile));
+    return payload === undefined
+      ? undefined
+      : decryptProfile(this.key, profile, payload);
+  }
 }
 
 /** ローカル開発用に、ディレクトリ配下へファイルとして保存するストア（権限 600、原子的に置換）。 */
@@ -52,6 +64,15 @@ export class LocalObjectStore implements ObjectStore {
     await writeFile(temp, data, { mode: OWNER_ONLY_FILE_MODE });
     await chmod(temp, OWNER_ONLY_FILE_MODE);
     await rename(temp, file);
+  }
+
+  async get(name: string): Promise<Buffer | undefined> {
+    try {
+      return await readFile(this.resolve(name));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw error;
+    }
   }
 
   private resolve(name: string): string {
@@ -79,6 +100,24 @@ export class GcsObjectStore implements ObjectStore {
       contentType: OBJECT_CONTENT_TYPE,
     });
   }
+
+  async get(name: string): Promise<Buffer | undefined> {
+    assertObjectName(name);
+    try {
+      const [data] = await this.storage
+        .bucket(this.bucket)
+        .file(name)
+        .download();
+      return data;
+    } catch (error) {
+      if (isNotFound(error)) return undefined;
+      throw error;
+    }
+  }
+}
+
+function isNotFound(error: unknown): boolean {
+  return (error as { code?: unknown }).code === NOT_FOUND_HTTP_CODE;
 }
 
 function assertObjectName(name: string): void {

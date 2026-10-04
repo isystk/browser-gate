@@ -18,6 +18,8 @@ export interface LoginSessionHost {
   start(profile: string): Promise<LoginBrowserSession>;
   current(): LoginBrowserSession | undefined;
   end(): Promise<void>;
+  /** task の実行中は、切断や期限によるセッションの自動破棄を保留する。 */
+  hold<T>(task: () => Promise<T>): Promise<T>;
 }
 
 /** 暗号化してプロファイルを保存する。 */
@@ -57,7 +59,12 @@ export class LoginService {
    * - Encrypts and stores the result, then ends the session
    * - Leaves the session open if storing fails so that the user can retry
    */
-  async saveSession(): Promise<SaveResult> {
+  saveSession(): Promise<SaveResult> {
+    // 保存の途中で、画面の切断による自動破棄がセッションを閉じないようにする
+    return this.deps.sessions.hold(() => this.saveActiveSession());
+  }
+
+  private async saveActiveSession(): Promise<SaveResult> {
     const session = this.deps.sessions.current();
     if (session === undefined) {
       throw new AppError('INVALID_REQUEST', 'No login session is active');

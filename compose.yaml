@@ -13,8 +13,12 @@ services:
     environment:
       MODE: api
       CONFIG_PATH: /app/config/local.json
+      # ログイン済みプロファイルの読み取り用（login が保存したものを読み取り専用で参照する）
+      PROFILE_ENCRYPTION_KEY: ${PROFILE_ENCRYPTION_KEY:-}
+      PROFILE_STORE_DIR: /data/profiles
     volumes:
       - ./config:/app/config:ro
+      - login-profiles:/data/profiles:ro
     ports:
       - "127.0.0.1:${API_HOST_PORT:-8080}:8080"
 
@@ -31,6 +35,8 @@ services:
       OAUTH_FAKE: ${OAUTH_FAKE:-}
       OAUTH_CLIENT_JSON: ${OAUTH_CLIENT_JSON:-}
       PROFILE_STORE_DIR: /data/profiles
+      # 切断後の自動破棄までの猶予（秒）。空なら既定の 180 秒
+      LOGIN_DISCONNECT_GRACE_SECONDS: ${LOGIN_DISCONNECT_GRACE_SECONDS:-}
     volumes:
       - ./config:/app/config:ro
       - login-profiles:/data/profiles

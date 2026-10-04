@@ -1,4 +1,6 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { randomBytes } from 'node:crypto';
+
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { createApp } from '../../src/app.js';
 import {
@@ -9,6 +11,8 @@ import {
 import type { AppConfig } from '../../src/config/appConfig.js';
 import { FetchService } from '../../src/fetch/service.js';
 import { createLogger } from '../../src/lib/logger.js';
+import { ProfileLoader } from '../../src/profile/loader.js';
+import { type ObjectStore, ProfileStore } from '../../src/profile/store.js';
 import {
   DEFAULT_EGRESS_POLICY,
   type EgressPolicy,
@@ -16,6 +20,8 @@ import {
 import {
   type FixtureProxy,
   type FixtureServer,
+  SESSION_COOKIE,
+  SESSION_VALUE,
   startFixtureProxy,
   startFixtureServer,
 } from '../fixtures/servers.js';
@@ -43,12 +49,47 @@ function record(
 
 const CONFIG: AppConfig = {
   api_keys: [
-    record('full', KEY, { profiles: ['news'] }),
+    record('full', KEY, { profiles: ['news', 'member'] }),
     record('anonymous-only', KEY_NO_PROFILE),
     record('revoked', KEY_REVOKED, { revoked_at: '2026-10-05T00:00:00.000Z' }),
   ],
-  profiles: { news: { allowed_domains: ['example.com'] } },
+  profiles: {
+    news: { allowed_domains: ['example.com'] },
+    member: { allowed_domains: ['127.0.0.1'] },
+  },
 };
+
+class MemoryObjectStore implements ObjectStore {
+  readonly objects = new Map<string, Buffer>();
+
+  async put(name: string, data: Buffer): Promise<void> {
+    this.objects.set(name, data);
+  }
+
+  async get(name: string): Promise<Buffer | undefined> {
+    return this.objects.get(name);
+  }
+}
+
+function sessionState(domain: string): Buffer {
+  return Buffer.from(
+    JSON.stringify({
+      cookies: [
+        {
+          name: SESSION_COOKIE,
+          value: SESSION_VALUE,
+          domain,
+          path: '/',
+          expires: -1,
+          httpOnly: true,
+          secure: false,
+          sameSite: 'Lax',
+        },
+      ],
+      origins: [],
+    }),
+  );
+}
 
 interface ApiResult {
   status: number;
@@ -75,6 +116,7 @@ describe('POST /fetch', () => {
     egress: EgressPolicy,
     maxResponseBytes: number,
     resolve?: (host: string) => Promise<string[]>,
+    profiles?: ProfileLoader,
   ) {
     const logger = createLogger((line) => logLines.push(line));
     const service = new FetchService({
@@ -83,6 +125,7 @@ describe('POST /fetch', () => {
       maxResponseBytes,
       logger,
       resolve,
+      profiles,
     });
     const app = createApp('api', { fetchService: service, logger });
     return async (
@@ -353,15 +396,162 @@ describe('POST /fetch', () => {
       expect(status).toBe(403);
       expect(json.error.code).toBe('FORBIDDEN_DOMAIN');
     });
+  });
 
-    it('does not accept profile fetching yet even when permitted', async () => {
-      const { status, json } = await call({
+  describe('profile fetching', () => {
+    const OTHER_HOST = 'other.test';
+    let objects: MemoryObjectStore;
+    let profileStore: ProfileStore;
+    let callWithProfiles: (body: unknown) => Promise<ApiResult>;
+    let callWithoutProfiles: (body: unknown) => Promise<ApiResult>;
+
+    beforeAll(() => {
+      objects = new MemoryObjectStore();
+      profileStore = new ProfileStore(objects, randomBytes(32));
+      const resolve = async (host: string): Promise<string[]> =>
+        host === OTHER_HOST ? ['127.0.0.1'] : [PUBLIC_IP];
+      const otherPolicy: EgressPolicy = {
+        ...policy,
+        exemptTargets: [
+          ...policy.exemptTargets,
+          `${OTHER_HOST}:${control.port}`,
+        ],
+      };
+      callWithProfiles = buildCaller(
+        otherPolicy,
+        SMALL_LIMIT_BYTES * 100,
+        resolve,
+        new ProfileLoader(profileStore),
+      );
+      callWithoutProfiles = buildCaller(policy, SMALL_LIMIT_BYTES * 100);
+    });
+
+    it('shows the signed-in page with the profile and the sign-in page without it', async () => {
+      await profileStore.save('member', sessionState('127.0.0.1'));
+      const url = `${web.origin}/whoami`;
+
+      const withProfile = await callWithProfiles({
+        url,
+        profile: 'member',
+        outputs: ['text'],
+      });
+      const anonymous = await callWithProfiles({ url, outputs: ['text'] });
+
+      expect(withProfile.json.text).toContain('Signed in as alice');
+      expect(anonymous.json.text).toContain('Please sign in');
+    });
+
+    it('does not write the session cookie value to the logs', async () => {
+      await profileStore.save('member', sessionState('127.0.0.1'));
+      logLines.length = 0;
+
+      await callWithProfiles({
+        url: `${web.origin}/whoami`,
+        profile: 'member',
+      });
+
+      expect(logLines.length).toBeGreaterThan(0);
+      expect(logLines.join('\n')).not.toContain(SESSION_VALUE);
+    });
+
+    it('returns PROFILE_NOT_FOUND for a registered profile that was never saved', async () => {
+      const { status, json } = await callWithProfiles({
         url: 'https://example.com/',
         profile: 'news',
       });
 
-      expect(status).toBe(400);
-      expect(json.error.code).toBe('INVALID_REQUEST');
+      expect(status).toBe(404);
+      expect(json.error.code).toBe('PROFILE_NOT_FOUND');
+    });
+
+    it('returns INTERNAL_ERROR without details when the stored data is corrupted', async () => {
+      objects.objects.set('profiles/news.enc', Buffer.from('BGP1 corrupted'));
+
+      const { status, json } = await callWithProfiles({
+        url: 'https://example.com/',
+        profile: 'news',
+      });
+
+      expect(status).toBe(500);
+      expect(json.error.code).toBe('INTERNAL_ERROR');
+      expect(JSON.stringify(json)).not.toContain('corrupted');
+    });
+
+    it('denies a key without the profile even when the saved data exists', async () => {
+      await profileStore.save('member', sessionState('127.0.0.1'));
+
+      const { json } = await callWithProfiles({
+        url: `${web.origin}/whoami`,
+        profile: 'member',
+      });
+      const forbidden = await buildCaller(
+        policy,
+        SMALL_LIMIT_BYTES,
+        undefined,
+        new ProfileLoader(profileStore),
+      )(
+        { url: `${web.origin}/whoami`, profile: 'member' },
+        `Bearer ${KEY_NO_PROFILE}`,
+      );
+
+      expect(json.ok).toBe(true);
+      expect(forbidden.json.error.code).toBe('FORBIDDEN_PROFILE');
+    });
+
+    it('returns INTERNAL_ERROR when profile storage is not configured on the server', async () => {
+      const { status, json } = await callWithoutProfiles({
+        url: `${web.origin}/whoami`,
+        profile: 'member',
+      });
+
+      expect(status).toBe(500);
+      expect(json.error.code).toBe('INTERNAL_ERROR');
+    });
+
+    beforeEach(() => {
+      control.hits.length = 0;
+      control.cookieHeaders.length = 0;
+    });
+
+    it('rejects a redirect to a domain outside the profile without sending it the session cookie', async () => {
+      await profileStore.save('member', sessionState('127.0.0.1'));
+      const target = `http://${OTHER_HOST}:${control.port}/whoami`;
+
+      const { status, json } = await callWithProfiles({
+        url: `${web.origin}/redirect?to=${encodeURIComponent(target)}`,
+        profile: 'member',
+      });
+
+      expect(status).toBe(403);
+      expect(json.error.code).toBe('FORBIDDEN_DOMAIN');
+      expect(JSON.stringify(control.cookieHeaders)).not.toContain(
+        SESSION_VALUE,
+      );
+    });
+
+    it('blocks a navigation to a domain outside the profile triggered by a step', async () => {
+      await profileStore.save('member', sessionState('127.0.0.1'));
+      const target = `http://${OTHER_HOST}:${control.port}/whoami`;
+
+      const { json } = await callWithProfiles({
+        url: `${web.origin}/leave?to=${encodeURIComponent(target)}`,
+        profile: 'member',
+        steps: [{ click: '.leave' }],
+      });
+
+      expect(json.error.code).toBe('FORBIDDEN_DOMAIN');
+      expect(control.hits).toEqual([]);
+    });
+
+    it('allows the same redirect for an anonymous fetch', async () => {
+      const target = `http://${OTHER_HOST}:${control.port}/whoami`;
+
+      const { json } = await callWithProfiles({
+        url: `${web.origin}/redirect?to=${encodeURIComponent(target)}`,
+        outputs: ['text'],
+      });
+
+      expect(json.text).toContain('Please sign in');
     });
   });
 

@@ -92,6 +92,24 @@ describe('assertFetchPermission', () => {
     ).toBe('FORBIDDEN_PROFILE');
   });
 
+  it.each(['constructor', 'toString'])(
+    'treats the inherited object property name %s as an unknown profile',
+    (name) => {
+      key.profiles = [name];
+
+      expect(
+        codeOf(() =>
+          assertFetchPermission({
+            key,
+            config,
+            profile: name,
+            host: 'example.com',
+          }),
+        ),
+      ).toBe('FORBIDDEN_PROFILE');
+    },
+  );
+
   it('rejects an unknown profile as forbidden to avoid leaking existence', () => {
     key.profiles = ['ghost'];
     expect(

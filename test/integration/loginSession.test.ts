@@ -33,6 +33,7 @@ describe('LoginSessionManager (real Chromium)', () => {
     return new LoginSessionManager({
       policy,
       maxLifetimeMs,
+      disconnectGraceMs: 60_000,
       logger: createLogger(() => undefined),
     });
   }
@@ -76,6 +77,7 @@ describe('LoginSessionManager (real Chromium)', () => {
   it('reuses the session for the same profile and refuses a different profile', async () => {
     manager = createManager();
     const first = await manager.start('news');
+    manager.clientConnected();
 
     expect(await manager.start('news')).toBe(first);
     await expect(manager.start('other')).rejects.toSatisfy(
