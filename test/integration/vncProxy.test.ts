@@ -1,7 +1,7 @@
 import http from 'node:http';
 import net, { type AddressInfo } from 'node:net';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createLogger } from '../../src/lib/logger.js';
 import { attachVncProxy } from '../../src/login/vncProxy.js';
@@ -96,10 +96,14 @@ describe('attachVncProxy', () => {
   let port: number;
   let sessionActive: boolean;
   let sockets: net.Socket[];
+  let connected: number;
+  let released: number;
 
   beforeEach(async () => {
     upstream = await startUpstream();
     sessionActive = true;
+    connected = 0;
+    released = 0;
     sockets = [];
     server = http.createServer((_req, res) => res.writeHead(404).end());
     attachVncProxy(server, {
@@ -109,6 +113,12 @@ describe('attachVncProxy', () => {
       isAuthorized: (cookieHeader) =>
         cookieHeader?.includes(AUTHORIZED_COOKIE) === true,
       hasActiveSession: () => sessionActive,
+      onClientConnected: () => {
+        connected += 1;
+        return () => {
+          released += 1;
+        };
+      },
       logger: createLogger(() => undefined),
     });
     await new Promise<void>((resolve) =>
@@ -202,4 +212,27 @@ describe('attachVncProxy', () => {
       expect(upstream.connections).toBe(0);
     },
   );
+
+  it('reports a client as connected only after the upstream accepts it', async () => {
+    await attempt({ Cookie: AUTHORIZED_COOKIE, Origin: ORIGIN });
+
+    expect(connected).toBe(1);
+    expect(released).toBe(0);
+  });
+
+  it('releases the client when its WebSocket closes', async () => {
+    const { socket } = await attempt({
+      Cookie: AUTHORIZED_COOKIE,
+      Origin: ORIGIN,
+    });
+
+    socket.destroy();
+    await vi.waitFor(() => expect(released).toBe(1));
+  });
+
+  it('does not report a client for a rejected upgrade', async () => {
+    await attempt({ Origin: ORIGIN });
+
+    expect(connected).toBe(0);
+  });
 });

@@ -8,6 +8,14 @@ const MAGIC = Buffer.from('BGP1');
 const HEADER_BYTES = MAGIC.length + IV_BYTES + TAG_BYTES;
 const BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
 
+/** Thrown when stored profile data has an invalid format or cannot be authenticated with the key. */
+export class ProfileDecryptError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProfileDecryptError';
+  }
+}
+
 /** Decodes a base64 AES-256 key and throws if it is not exactly 32 bytes. The key value is never included in the error. */
 export function parseEncryptionKey(base64: string): Buffer {
   const key = BASE64_PATTERN.test(base64.trim())
@@ -51,7 +59,9 @@ export function decryptProfile(
     payload.length < HEADER_BYTES ||
     !payload.subarray(0, magicEnd).equals(MAGIC)
   ) {
-    throw new Error('The encrypted profile has an invalid format');
+    throw new ProfileDecryptError(
+      'The encrypted profile has an invalid format',
+    );
   }
   const decipher = createDecipheriv(
     ALGORITHM,
@@ -66,7 +76,9 @@ export function decryptProfile(
       decipher.final(),
     ]);
   } catch {
-    throw new Error('The encrypted profile could not be decrypted');
+    throw new ProfileDecryptError(
+      'The encrypted profile could not be decrypted',
+    );
   }
 }
 

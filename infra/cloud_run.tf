@@ -42,6 +42,20 @@ resource "google_cloud_run_v2_service" "api" {
         name  = "CONFIG_PATH"
         value = local.config_mount_path
       }
+      # ログイン済みプロファイルの読み取り用（Phase 4 最小部分）。値は Terraform に書かず、鍵は実行時に Secret Manager から参照する。
+      env {
+        name  = "GCS_BUCKET"
+        value = google_storage_bucket.profiles.name
+      }
+      env {
+        name = "PROFILE_ENCRYPTION_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.this["profile_encryption"].secret_id
+            version = "latest"
+          }
+        }
+      }
 
       volume_mounts {
         name       = "config"
@@ -81,6 +95,8 @@ resource "google_cloud_run_v2_service" "api" {
   depends_on = [
     google_secret_manager_secret_version.config_initial,
     google_secret_manager_secret_iam_member.api_config,
+    google_secret_manager_secret_iam_member.api_profile_encryption,
+    google_storage_bucket_iam_member.api_profiles,
   ]
 }
 

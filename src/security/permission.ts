@@ -18,7 +18,9 @@ export function assertFetchPermission({
   host,
 }: FetchPermissionInput): void {
   if (profile === undefined) return;
-  const profileConfig = config.profiles[profile];
+  const profileConfig = Object.hasOwn(config.profiles, profile)
+    ? config.profiles[profile]
+    : undefined;
   if (!key.profiles.includes(profile) || profileConfig === undefined) {
     throw new AppError(
       'FORBIDDEN_PROFILE',

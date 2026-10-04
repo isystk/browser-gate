@@ -9,9 +9,16 @@ import {
 } from './config/appConfig.js';
 import { loadEnv } from './config/env.js';
 import { loadLoginEnv } from './config/loginEnv.js';
+import { type ProfileEnv, loadProfileEnv } from './config/profileEnv.js';
 import { FetchService } from './fetch/service.js';
 import { createLogger } from './lib/logger.js';
 import { createLoginRuntime } from './login/runtime.js';
+import { ProfileLoader } from './profile/loader.js';
+import {
+  GcsObjectStore,
+  LocalObjectStore,
+  ProfileStore,
+} from './profile/store.js';
 import { DEFAULT_EGRESS_POLICY } from './security/urlGuard.js';
 
 const env = loadEnv();
@@ -52,5 +59,17 @@ function createFetchService(): FetchService {
     policy: DEFAULT_EGRESS_POLICY,
     maxResponseBytes: env.maxResponseBytes,
     logger,
+    profiles: createProfileLoader(loadProfileEnv()),
   });
+}
+
+function createProfileLoader(
+  profileEnv: ProfileEnv | undefined,
+): ProfileLoader | undefined {
+  if (profileEnv === undefined) return undefined;
+  const objects =
+    profileEnv.store.kind === 'gcs'
+      ? new GcsObjectStore(profileEnv.store.bucket)
+      : new LocalObjectStore(profileEnv.store.dir);
+  return new ProfileLoader(new ProfileStore(objects, profileEnv.encryptionKey));
 }

@@ -45,6 +45,25 @@ export function revokeApiKey(
   return { ...config, api_keys };
 }
 
+/** Returns a config in which the key may also use the given profiles. Fails for an unknown or revoked key, or an undefined profile. */
+export function grantProfiles(
+  config: AppConfig,
+  id: string,
+  profiles: readonly string[],
+): AppConfig {
+  const target = config.api_keys.find((record) => record.id === id);
+  if (target === undefined) throw new Error(`API key not found: ${id}`);
+  if (target.revoked_at !== undefined)
+    throw new Error(`API key is revoked: ${id}`);
+  assertProfilesDefined(config, profiles);
+  const api_keys = config.api_keys.map((record) =>
+    record.id === id
+      ? { ...record, profiles: [...new Set([...record.profiles, ...profiles])] }
+      : record,
+  );
+  return { ...config, api_keys };
+}
+
 /** Lists keys without their hashes. */
 export function listApiKeys(config: AppConfig): ApiKeySummary[] {
   return config.api_keys.map(({ id, profiles, created_at, revoked_at }) => ({
@@ -60,8 +79,15 @@ function assertValidNewKey(config: AppConfig, input: NewApiKey): void {
     throw new Error('id must match ^[a-z0-9][a-z0-9_-]{0,63}$');
   if (config.api_keys.some((record) => record.id === input.id))
     throw new Error(`API key id already exists: ${input.id}`);
-  const unknown = input.profiles.find(
-    (profile) => config.profiles[profile] === undefined,
+  assertProfilesDefined(config, input.profiles);
+}
+
+function assertProfilesDefined(
+  config: AppConfig,
+  profiles: readonly string[],
+): void {
+  const unknown = profiles.find(
+    (profile) => !Object.hasOwn(config.profiles, profile),
   );
   if (unknown !== undefined)
     throw new Error(`Profile is not defined in the config: ${unknown}`);

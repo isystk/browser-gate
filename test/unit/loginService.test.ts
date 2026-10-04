@@ -34,12 +34,16 @@ function cookie(domain: string): StorageStateLike['cookies'][number] {
 describe('LoginService', () => {
   let saved: { profile: string; data: Buffer }[];
   let ended: number;
+  let holding: number;
+  let holdingWhileSaving: boolean[];
   let active: LoginBrowserSession | undefined;
   let service: LoginService;
 
   beforeEach(() => {
     saved = [];
     ended = 0;
+    holding = 0;
+    holdingWhileSaving = [];
     active = undefined;
     const sessions: LoginSessionHost = {
       start: async (profile) => {
@@ -57,12 +61,23 @@ describe('LoginService', () => {
         ended += 1;
         active = undefined;
       },
+      hold: async (task) => {
+        holding += 1;
+        try {
+          return await task();
+        } finally {
+          holding -= 1;
+        }
+      },
     };
     service = new LoginService({
       getConfig: async () => CONFIG,
       sessions,
       profileStore: {
-        save: async (profile, data) => void saved.push({ profile, data }),
+        save: async (profile, data) => {
+          holdingWhileSaving.push(holding > 0);
+          saved.push({ profile, data });
+        },
       },
       logger: createLogger(() => undefined),
     });
@@ -104,6 +119,15 @@ describe('LoginService', () => {
     expect(ended).toBe(1);
   });
 
+  it('holds the session so that it is not discarded while saving, and releases it afterwards', async () => {
+    await service.openSession('news');
+
+    await service.saveSession();
+
+    expect(holdingWhileSaving).toEqual([true]);
+    expect(holding).toBe(0);
+  });
+
   it('refuses to save a profile that has no allowed domains', async () => {
     await service.openSession('empty');
 
@@ -128,6 +152,7 @@ describe('LoginService', () => {
         end: async () => {
           ended += 1;
         },
+        hold: async (task) => task(),
       },
       profileStore: {
         save: async () => {

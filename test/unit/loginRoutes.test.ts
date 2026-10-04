@@ -78,6 +78,10 @@ class FakeSessionHost implements LoginSessionHost {
   async end(): Promise<void> {
     this.active = undefined;
   }
+
+  hold<T>(task: () => Promise<T>): Promise<T> {
+    return task();
+  }
 }
 
 class MemoryObjectStore implements ObjectStore {
@@ -93,6 +97,10 @@ class MemoryObjectStore implements ObjectStore {
 
   async put(name: string, data: Buffer): Promise<void> {
     this.objects.set(name, data);
+  }
+
+  async get(name: string): Promise<Buffer | undefined> {
+    return this.objects.get(name);
   }
 }
 

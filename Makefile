@@ -17,6 +17,8 @@ PROD_KEY_DIR ?= $(HOME)/.config/browser-gate/prod-keys
 RUN_SERVICE := browser-gate-api
 # ID の検証（パス操作や意図しない文字を拒否）
 CHECK_ID = case "$$ID" in ''|*[!A-Za-z0-9_-]*) echo "ID を指定してください（英数字・-・_ のみ。例: ID=musashi）"; exit 1;; esac
+# PROFILE / PROFILES の検証（空は許可。複数はスペースまたはカンマ区切り）
+CHECK_PROFILES = case "$$profiles" in *[!A-Za-z0-9_,\ -]*) echo "プロファイル名は英数字・-・_ のみです（複数はスペースまたはカンマ区切り）"; exit 1;; esac
 
 .DEFAULT_GOAL := help
 
@@ -86,6 +88,11 @@ keys-add: ## APIキーを発行します（例: make keys-add ID=musashi。キ�
 	@test -n "$(ID)" || { echo "ID を指定してください（例: make keys-add ID=musashi）"; exit 1; }
 	$(KEYS_RUN) add --id "$(ID)"
 
+.PHONY: keys-grant
+keys-grant: ## 既存のAPIキーにプロファイル権限を追加します（例: make keys-grant ID=musashi PROFILE=github-test）。
+	@test -n "$(ID)" -a -n "$(PROFILE)" || { echo "ID と PROFILE を指定してください（例: make keys-grant ID=musashi PROFILE=github-test）"; exit 1; }
+	$(KEYS_RUN) grant --id "$(ID)" --profile "$(PROFILE)"
+
 .PHONY: keys-list
 keys-list: ## APIキーの一覧を表示します。
 	$(KEYS_RUN) list
@@ -117,19 +124,31 @@ prod-oauth-client-set: ## OAuth クライアント情報（JSON ファイル）�
 	gcloud secrets versions add $(OAUTH_CLIENT_SECRET) --project $(GCP_PROJECT) --data-file="$(FILE)"
 
 .PHONY: prod-keys-add
-prod-keys-add: ## 本番APIキーを発行して反映します（例: make prod-keys-add ID=musashi。キーは画面に出さず ~/.config/browser-gate/prod-keys に保存）。
+prod-keys-add: ## 本番APIキーを発行して反映します（例: make prod-keys-add ID=musashi [PROFILES="github-test"]。キーは画面に出さず ~/.config/browser-gate/prod-keys に保存）。
 	@$(CHECK_ID); \
+	profiles="$${PROFILES:-}"; $(CHECK_PROFILES); \
+	args=(); for p in $$(printf '%s' "$$profiles" | tr ',' ' '); do args+=(--profile "$$p"); done; \
 	f="$(PROD_KEY_DIR)/$$ID.key"; \
 	test ! -e "$$f" || { echo "$$f は既に存在します（失効してから再発行してください）"; exit 1; }; \
 	umask 077; mkdir -p "$(PROD_KEY_DIR)"; chmod 700 "$(PROD_KEY_DIR)"; \
 	$(MAKE) --no-print-directory prod-config-pull; \
-	out="$$($(PROD_KEYS_RUN) add --id "$$ID" | tr -d '\r')"; \
+	out="$$($(PROD_KEYS_RUN) add --id "$$ID" "$${args[@]}" | tr -d '\r')"; \
 	key="$$(printf '%s\n' "$$out" | grep -E '^bg_[A-Za-z0-9_-]+$$' | head -n 1 || true)"; \
 	test -n "$$key" || { echo "キーの発行結果を取得できませんでした（config/prod.json を確認してください。本番へは未反映）"; exit 1; }; \
 	printf '%s\n' "$$key" > "$$f"; chmod 600 "$$f"; unset key out; \
 	echo "キーを $$f に保存しました。本番へ反映します..."; \
 	$(MAKE) --no-print-directory prod-config-push || { echo "反映に失敗しました。make prod-config-push で再実行してください（キーは保存済み）"; exit 1; }; \
 	echo "完了: ID=$$ID（反映まで最大10秒）"
+
+.PHONY: prod-keys-grant
+prod-keys-grant: ## 既存の本番APIキーにプロファイル権限を追加して反映します（例: make prod-keys-grant ID=musashi PROFILE=github-test）。
+	@$(CHECK_ID); \
+	profiles="$${PROFILE:-}"; test -n "$$profiles" || { echo "PROFILE を指定してください（例: PROFILE=github-test）"; exit 1; }; $(CHECK_PROFILES); \
+	args=(); for p in $$(printf '%s' "$$profiles" | tr ',' ' '); do args+=(--profile "$$p"); done; \
+	$(MAKE) --no-print-directory prod-config-pull; \
+	$(PROD_KEYS_RUN) grant --id "$$ID" "$${args[@]}"; \
+	$(MAKE) --no-print-directory prod-config-push; \
+	echo "完了: ID=$$ID に $$profiles を許可しました（反映まで最大10秒）"
 
 .PHONY: prod-keys-list
 prod-keys-list: ## 保存済みの本番キーのIDを一覧表示します（キー本体は表示しません）。
@@ -147,7 +166,7 @@ prod-keys-revoke: ## 本番APIキーを失効して反映し、保存済みキ�
 	echo "完了: ID=$$ID を失効しました（反映まで最大10秒）"
 
 .PHONY: prod-fetch
-prod-fetch: ## 本番 /fetch を実行します（例: make prod-fetch URL=https://example.com/ [OUT=text|html|screenshot] [ID=musashi] [FILE=out.png] [API_URL=...]）。
+prod-fetch: ## 本番 /fetch を実行します（例: make prod-fetch URL=https://example.com/ [OUT=text|html|screenshot] [ID=musashi] [PROFILE=github-test] [FILE=out.png] [API_URL=...]）。
 	@test -n "$${URL:-}" || { echo "URL を指定してください（例: make prod-fetch URL=https://example.com/）"; exit 1; }; \
 	out="$${OUT:-text}"; \
 	case "$$out" in text|html|screenshot) ;; *) echo "OUT は text / html / screenshot のいずれかです"; exit 1;; esac; \
@@ -162,7 +181,9 @@ prod-fetch: ## 本番 /fetch を実行します（例: make prod-fetch URL=https
 	base="$${API_URL:-$$($(TF_RUN) output -raw api_url 2>/dev/null | tr -d '\r' || true)}"; \
 	[ -n "$$base" ] || base="$$(gcloud run services describe $(RUN_SERVICE) --region $(GCP_REGION) --project $(GCP_PROJECT) --format 'value(status.url)')"; \
 	[ -n "$$base" ] || { echo "api_url を取得できません（API_URL=https://... を指定してください）"; exit 1; }; \
-	body="$$(jq -cn --arg url "$$URL" --arg o "$$out" '{url:$$url, outputs:[$$o]}')"; \
+	profile="$${PROFILE:-}"; \
+	case "$$profile" in *[!A-Za-z0-9_-]*) echo "PROFILE は英数字・-・_ のみです（例: PROFILE=github-test）"; exit 1;; esac; \
+	body="$$(jq -cn --arg url "$$URL" --arg o "$$out" --arg p "$$profile" '{url:$$url, outputs:[$$o]} + (if $$p != "" then {profile:$$p} else {} end)')"; \
 	res="$$(printf 'Authorization: Bearer %s\n' "$$(cat "$$f")" | curl -sS -m 90 -X POST "$$base/fetch" -H @- -H 'Content-Type: application/json' -d "$$body")"; \
 	if [ "$$out" = screenshot ]; then \
 		dest="$${FILE:-screenshot.png}"; \

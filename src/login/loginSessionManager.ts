@@ -18,6 +18,8 @@ export interface LoginSessionManagerDeps {
   resolve?: HostResolver;
   /** セッションの最大継続時間。超えたら自動で閉じる。 */
   maxLifetimeMs: number;
+  /** 接続中の画面が無くなってから、セッションを自動破棄するまでの猶予。猶予内の再接続では同じセッションに戻れる。 */
+  disconnectGraceMs: number;
   logger: Logger;
 }
 
@@ -38,6 +40,13 @@ interface ActiveSession {
   browser: Browser;
   proxy: EgressProxy;
   timer: NodeJS.Timeout;
+  /** 接続中の noVNC 画面（WebSocket）の数。 */
+  clients: number;
+  /** 保存など、途中で破棄してはいけない処理の実行数。 */
+  holds: number;
+  /** 保存中に最大継続時間を迎えた。処理が終わり次第閉じる。 */
+  expireAfterHold: boolean;
+  graceTimer?: NodeJS.Timeout;
 }
 
 // noVNC の画面（Xvfb の SCREEN_GEOMETRY 既定値）に合わせる
@@ -55,7 +64,7 @@ export class LoginSessionManager implements LoginSessionHost {
 
   constructor(private readonly deps: LoginSessionManagerDeps) {}
 
-  /** Starts the login browser, returns the existing one for the same profile, or throws PROFILE_BUSY for another profile. */
+  /** Starts the login browser, returns the existing one for the same profile, or throws PROFILE_BUSY for another profile (an abandoned session with no connected screen and no save in progress is replaced instead). */
   start(profile: string): Promise<ChromiumLoginSession> {
     const run = this.queue.then(() => this.startExclusive(profile));
     // 失敗は run を通じて呼び出し側へ伝わる。キューは次の start を継続させるためだけに結果を捨てる
@@ -74,8 +83,55 @@ export class LoginSessionManager implements LoginSessionHost {
   async end(): Promise<void> {
     const entry = this.active;
     if (entry === undefined) return;
+    await this.close(entry);
+  }
+
+  /**
+   * Registers a connected noVNC screen and returns the function to call when it disconnects.
+   * The session is discarded after the grace period once no screen is connected.
+   */
+  clientConnected(): () => void {
+    const entry = this.active;
+    if (entry === undefined) return () => undefined;
+    entry.clients += 1;
+    clearTimeout(entry.graceTimer);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      entry.clients -= 1;
+      this.armGrace(entry);
+    };
+  }
+
+  /** Runs a task (such as saving) during which the session must not be discarded automatically. */
+  async hold<T>(task: () => Promise<T>): Promise<T> {
+    const entry = this.active;
+    if (entry === undefined) return task();
+    entry.holds += 1;
+    clearTimeout(entry.graceTimer);
+    try {
+      return await task();
+    } finally {
+      entry.holds -= 1;
+      await this.afterHold(entry);
+    }
+  }
+
+  private async afterHold(entry: ActiveSession): Promise<void> {
+    if (this.active !== entry || entry.holds > 0) return;
+    if (entry.expireAfterHold) {
+      await this.close(entry);
+      return;
+    }
+    this.armGrace(entry);
+  }
+
+  private async close(entry: ActiveSession): Promise<void> {
+    if (this.active !== entry) return;
     this.active = undefined;
     clearTimeout(entry.timer);
+    clearTimeout(entry.graceTimer);
     await entry.browser
       .close()
       .catch((error: unknown) => this.logCloseError(error));
@@ -83,8 +139,14 @@ export class LoginSessionManager implements LoginSessionHost {
   }
 
   private async startExclusive(profile: string): Promise<ChromiumLoginSession> {
-    if (this.active !== undefined)
-      return this.reuseOrReject(this.active, profile);
+    if (this.active !== undefined) {
+      const existing = this.active;
+      if (!this.isAbandoned(existing) || existing.session.profile === profile) {
+        return this.reuseOrReject(existing, profile);
+      }
+      this.deps.logger.warn('login_session_replaced');
+      await this.close(existing);
+    }
     const proxy = await startEgressProxy({
       policy: this.deps.policy,
       resolve: this.deps.resolve,
@@ -93,7 +155,17 @@ export class LoginSessionManager implements LoginSessionHost {
     try {
       browser = await launchGuardedBrowser(proxy.port, LOGIN_BROWSER_OPTIONS);
       const session = await this.openContext(browser, profile);
-      this.register({ session, browser, proxy, timer: this.startTimer() });
+      const entry: ActiveSession = {
+        session,
+        browser,
+        proxy,
+        timer: this.startTimer(),
+        clients: 0,
+        holds: 0,
+        expireAfterHold: false,
+      };
+      this.register(entry);
+      this.armGrace(entry);
       return session;
     } catch (error) {
       await browser
@@ -114,6 +186,8 @@ export class LoginSessionManager implements LoginSessionHost {
         'Another login session is in progress. Finish or cancel it first',
       );
     }
+    // 同じプロファイルで画面が開き直された。接続が来るまでの猶予を数え直す
+    this.armGrace(entry);
     return entry.session;
   }
 
@@ -142,10 +216,28 @@ export class LoginSessionManager implements LoginSessionHost {
   private startTimer(): NodeJS.Timeout {
     const timer = setTimeout(() => {
       this.deps.logger.warn('login_session_expired');
-      void this.end();
+      const entry = this.active;
+      if (entry === undefined) return;
+      if (entry.holds > 0) entry.expireAfterHold = true;
+      else void this.close(entry);
     }, this.deps.maxLifetimeMs);
     timer.unref();
     return timer;
+  }
+
+  /** Starts the countdown to discard a session that no screen is connected to. A save in progress postpones it until the save ends. */
+  private armGrace(entry: ActiveSession): void {
+    clearTimeout(entry.graceTimer);
+    if (entry.clients > 0 || entry.holds > 0) return;
+    entry.graceTimer = setTimeout(() => {
+      this.deps.logger.warn('login_session_abandoned');
+      void this.close(entry);
+    }, this.deps.disconnectGraceMs);
+    entry.graceTimer.unref();
+  }
+
+  private isAbandoned(entry: ActiveSession): boolean {
+    return entry.clients === 0 && entry.holds === 0;
   }
 
   /** Cleans up after a browser that closed on its own (crash or manual close). */
@@ -153,6 +245,7 @@ export class LoginSessionManager implements LoginSessionHost {
     if (this.active !== entry) return;
     this.active = undefined;
     clearTimeout(entry.timer);
+    clearTimeout(entry.graceTimer);
     await entry.proxy.close();
   }
 

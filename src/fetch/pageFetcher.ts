@@ -13,6 +13,7 @@ import {
   type UpstreamProxy,
   startEgressProxy,
 } from '../security/egressProxy.js';
+import type { StorageStateLike } from '../profile/cookieFilter.js';
 import { installRequestFilter } from '../security/requestFilter.js';
 import type { EgressPolicy } from '../security/urlGuard.js';
 import { type PageOutputs, collectOutputs } from './outputs.js';
@@ -33,6 +34,11 @@ export interface PageFetchInput {
   fullPage: boolean;
   timeoutMs: number;
   upstream: UpstreamProxy | undefined;
+  /** ログイン済みプロファイルで取得する場合の保存状態と、画面遷移を許可するドメイン。 */
+  session?: {
+    storageState: StorageStateLike;
+    allowedDomains: readonly string[];
+  };
 }
 
 export interface PageFetchResult extends PageOutputs {
@@ -49,6 +55,7 @@ export async function fetchPage(
 ): Promise<PageFetchResult> {
   const deadlineMs = Date.now() + input.timeoutMs;
   const violations: BlockedEvent[] = [];
+  const outOfDomain: BlockedEvent[] = [];
   const proxy = await startEgressProxy({
     policy: deps.policy,
     upstream: input.upstream,
@@ -57,16 +64,22 @@ export async function fetchPage(
   let browser: Browser | undefined;
   try {
     browser = await launchGuardedBrowser(proxy.port);
-    const context = await newGuardedContext(browser, deps.policy, (event) =>
-      violations.push(event),
+    const context = await newGuardedContext(
+      browser,
+      deps.policy,
+      (event) => violations.push(event),
+      input.session,
+      (event) => outOfDomain.push(event),
     );
     const page = await context.newPage();
     const blocked = (): readonly BlockedEvent[] => [
       ...violations,
       ...proxy.blocked,
     ];
-    const status = await navigate(page, input, blocked);
-    await executeSteps(page, input, deadlineMs);
+    const assertInDomain = (): void => assertNoOutOfDomain(outOfDomain);
+    const status = await navigate(page, input, blocked, assertInDomain);
+    await executeSteps(page, input, deadlineMs).finally(assertInDomain);
+    assertInDomain();
     const outputs = await collectOutputs(page, {
       outputs: input.outputs,
       extract: input.extract,
@@ -74,6 +87,7 @@ export async function fetchPage(
       deadlineMs,
       maxBytes: deps.maxResponseBytes,
     }).catch((error: unknown) => rethrowPageError(error, page));
+    assertInDomain();
     return { finalUrl: page.url(), status, ...outputs };
   } finally {
     await browser?.close();
@@ -85,21 +99,38 @@ async function newGuardedContext(
   browser: Browser,
   policy: EgressPolicy,
   onBlocked: (event: BlockedEvent) => void,
+  session: PageFetchInput['session'],
+  onOutOfDomain: (event: BlockedEvent) => void,
 ): Promise<BrowserContext> {
   const context = await browser.newContext({
     viewport: VIEWPORT,
     locale: 'ja-JP',
     serviceWorkers: 'block',
     acceptDownloads: false,
+    storageState: session?.storageState,
   });
-  await installRequestFilter(context, policy, onBlocked);
+  await installRequestFilter(context, policy, onBlocked, {
+    navigationDomains: session?.allowedDomains,
+    onOutOfDomain,
+  });
   return context;
+}
+
+/** Throws FORBIDDEN_DOMAIN if a top-level navigation left the profile's allowed domains (the request was aborted before any connection). */
+function assertNoOutOfDomain(events: readonly BlockedEvent[]): void {
+  if (events.length > 0) {
+    throw new AppError(
+      'FORBIDDEN_DOMAIN',
+      'The page navigated to a domain the profile is not allowed to access',
+    );
+  }
 }
 
 async function navigate(
   page: Page,
   input: PageFetchInput,
   blocked: () => readonly BlockedEvent[],
+  assertInDomain: () => void,
 ): Promise<number> {
   try {
     const response = await page.goto(input.url, {
@@ -108,6 +139,7 @@ async function navigate(
     });
     return response?.status() ?? 0;
   } catch (error) {
+    assertInDomain();
     if (blocked().length > 0)
       throw new AppError(
         'BLOCKED_URL',

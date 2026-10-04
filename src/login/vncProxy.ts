@@ -14,6 +14,8 @@ export interface VncProxyOptions {
   allowedOrigin: string;
   isAuthorized(cookieHeader: string | undefined): boolean;
   hasActiveSession(): boolean;
+  /** 上流へ接続できた利用者の通知。戻り値はその接続が閉じたときに呼ぶ解放関数。 */
+  onClientConnected?(): () => void;
   logger: Logger;
 }
 
@@ -78,8 +80,10 @@ function tunnel(
 ): void {
   const upstream = net.connect(options.upstreamPort, UPSTREAM_HOST);
   let connected = false;
+  let release: (() => void) | undefined;
   upstream.once('connect', () => {
     connected = true;
+    release = options.onClientConnected?.();
     upstream.write(serializeRequestHead(req));
     if (head.length > 0) upstream.write(head);
     socket.pipe(upstream);
@@ -90,7 +94,10 @@ function tunnel(
     socket.destroy();
   });
   socket.on('error', () => upstream.destroy());
-  socket.on('close', () => upstream.destroy());
+  socket.on('close', () => {
+    release?.();
+    upstream.destroy();
+  });
   upstream.on('close', () => socket.destroy());
 }
 

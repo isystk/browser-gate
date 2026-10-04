@@ -3,6 +3,7 @@ import type { ConfigProvider } from '../config/appConfig.js';
 import { AppError } from '../lib/errors.js';
 import { type Logger, sanitizeUrlForLog } from '../lib/logger.js';
 import type { HostResolver, UpstreamProxy } from '../security/egressProxy.js';
+import type { ProfileStateProvider } from '../profile/loader.js';
 import { assertFetchPermission } from '../security/permission.js';
 import {
   type EgressPolicy,
@@ -32,6 +33,8 @@ export interface FetchServiceDeps {
   resolve?: HostResolver;
   /** テストで差し替える。未指定なら実際の Chromium で取得する。 */
   pageFetcher?: PageFetcher;
+  /** プロファイルの読み込み。未設定なら profile 指定の取得は INTERNAL_ERROR になる。 */
+  profiles?: ProfileStateProvider;
 }
 
 export interface FetchResponseBody extends Omit<PageFetchResult, 'finalUrl'> {
@@ -102,22 +105,22 @@ export class FetchService {
   ): Promise<FetchResponseBody> {
     const request = parseFetchRequest(parseJson(rawBody));
     const url = parseTargetUrl(request.url, this.deps.policy);
+    const config = await this.deps.getConfig();
     assertFetchPermission({
       key,
-      config: await this.deps.getConfig(),
+      config,
       profile: request.profile,
       host: url.hostname,
     });
-    if (request.profile !== undefined) {
-      throw new AppError(
-        'INVALID_REQUEST',
-        'Profile fetching is not supported yet',
-      );
-    }
     const upstream = parseUpstreamProxy(request.proxy, this.deps.policy);
-    const result = await this.pageFetcher(
-      toPageInput(request, url.href, upstream),
+    const session = await this.loadSession(
+      request.profile,
+      config.profiles[request.profile ?? '']?.allowed_domains,
     );
+    const result = await this.pageFetcher({
+      ...toPageInput(request, url.href, upstream),
+      session,
+    });
     const { finalUrl, ...outputs } = result;
     return {
       ok: true,
@@ -126,6 +129,22 @@ export class FetchService {
       ...outputs,
       elapsed_ms: Date.now() - startedAt,
     };
+  }
+
+  /** Loads the saved login for an authorized profile request. Returns undefined for anonymous fetches. */
+  private async loadSession(
+    profile: string | undefined,
+    allowedDomains: readonly string[] | undefined,
+  ): Promise<PageFetchInput['session']> {
+    if (profile === undefined || allowedDomains === undefined) return undefined;
+    if (this.deps.profiles === undefined) {
+      throw new AppError(
+        'INTERNAL_ERROR',
+        'Profile fetching is not configured on this server',
+      );
+    }
+    const storageState = await this.deps.profiles.load(profile, allowedDomains);
+    return { storageState, allowedDomains };
   }
 
   private logFailure(

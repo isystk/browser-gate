@@ -22,6 +22,35 @@ describe('loadLoginEnv', () => {
     };
   });
 
+  describe('login disconnect grace', () => {
+    it('defaults to 3 minutes', () => {
+      expect(loadLoginEnv(source).disconnectGraceMs).toBe(180_000);
+    });
+
+    it('is configurable in seconds', () => {
+      source.LOGIN_DISCONNECT_GRACE_SECONDS = '45';
+
+      expect(loadLoginEnv(source).disconnectGraceMs).toBe(45_000);
+    });
+
+    it('treats an empty value as the default', () => {
+      source.LOGIN_DISCONNECT_GRACE_SECONDS = '';
+
+      expect(loadLoginEnv(source).disconnectGraceMs).toBe(180_000);
+    });
+
+    it.each(['abc', '0', '-5', '1.5', '9', '3601'])(
+      'rejects the invalid value %s',
+      (value) => {
+        source.LOGIN_DISCONNECT_GRACE_SECONDS = value;
+
+        expect(() => loadLoginEnv(source)).toThrow(
+          'LOGIN_DISCONNECT_GRACE_SECONDS',
+        );
+      },
+    );
+  });
+
   it('loads a production-like configuration', () => {
     const env = loadLoginEnv(source);
 

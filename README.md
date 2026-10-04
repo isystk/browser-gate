@@ -10,7 +10,7 @@ Bot 対策（自動アクセスを弾く仕組み）が入った Web サイト�
 |---|---|
 | 匿名取得（ログインなしで URL を開き、本文・HTML・スクリーンショット・指定部分の抜き出しを返す） | 本番稼働中 |
 | ログイン画面（noVNC で人が手動ログインし、Cookie 等を暗号化して保存） | 実装済み（ローカルで動作確認済み。本番は Secret 登録・OAuth クライアント作成・apply 待ち） |
-| ログイン済みプロファイルでの取得（`profile` 指定） | 未実装（Phase 4 で対応予定。指定すると `INVALID_REQUEST` を返す） |
+| ログイン済みプロファイルでの取得（`profile` 指定。保存済みの Cookie 等を復号して適用） | 実装済み（ローカルで動作確認済み。本番は apply・デプロイ・キーへの権限付与待ち）。取得後の Cookie 書き戻し・同時利用のロック・ログイン切れ検知と通知は未実装 |
 
 用語の補足:
 
@@ -40,16 +40,18 @@ make prod-keys-add ID=<呼び出し元の名前>
 - 発行は初回のみです。PC を再起動するたびに実行する必要はありません。同じ ID で再発行はできません（先に失効が必要）。
 - 本番への反映に最大 10 秒かかります。
 - キーの値をチャットや Git に貼らないでください。
+- ログイン済みプロファイルを使うキーは、発行時に `PROFILES="github-test"`（複数はスペース区切り）を付けます。発行済みのキーに後から許可を足すときは `make prod-keys-grant ID=<名前> PROFILE=<プロファイル名>`（本番の設定 JSON に反映。プロファイルは設定 JSON の `profiles` に登録済みであること）。
 
 ### 2. 取得する
 
 ```
-make prod-fetch URL=https://example.com/ [OUT=text|html|screenshot] [ID=<名前>] [FILE=out.png] [API_URL=...]
+make prod-fetch URL=https://example.com/ [OUT=text|html|screenshot] [ID=<名前>] [PROFILE=<プロファイル名>] [FILE=out.png] [API_URL=...]
 ```
 
 - `OUT` を省略すると `text`（本文）です。
 - `FILE` を指定すると、画面に出さずファイルへ保存します。`OUT=screenshot` のときの保存先は省略すると `screenshot.png` です。
 - `ID` は保存済みキーが1つだけなら省略できます。
+- `PROFILE` を指定すると、ログイン済みプロファイルで取得します（例: `make prod-fetch URL=https://github.com/settings/profile PROFILE=github-test`。未ログインなら GitHub のログイン画面、ログイン済みなら設定ページの内容が返ります）。キーに許可されたプロファイルだけ使えます。
 - 接続先（api の URL）は `API_URL=` 指定、`terraform output`、`gcloud run services describe` の順で自動的に解決されます。
 
 ### 3. キーの一覧・失効
@@ -57,6 +59,7 @@ make prod-fetch URL=https://example.com/ [OUT=text|html|screenshot] [ID=<名前>
 ```
 make prod-keys-list                   # 保存済みキーの ID と作成日時（キー本体は出ません）
 make prod-keys-revoke ID=<名前>       # 本番で失効し、保存済みキーも削除
+make prod-keys-grant ID=<名前> PROFILE=<プロファイル名>   # 既存キーにプロファイルの利用を許可
 ```
 
 ## 3. API リファレンス
@@ -76,7 +79,7 @@ make prod-keys-revoke ID=<名前>       # 本番で失効し、保存済みキ�
 | `extract` | 任意 | 抜き出したい部分。`{"名前": "CSSセレクタ"}` の形（最大 20 件）。値は常に文字列の配列で返る |
 | `steps` | 任意 | 取得前の操作（最大 20 個）。`{"wait_for":"CSS"}`（出現待ち）、`{"click":"CSS"}`（クリック）、`{"scroll":"top"}` または `{"scroll":"bottom"}` のみ |
 | `proxy` | 任意 | 上流プロキシ。`{"server":"http://host:port","username":..,"password":..}`（`http://host:port` 形式のみ対応） |
-| `profile` | 任意 | ログイン済みプロファイル名。Phase 4 まで未対応（指定すると `INVALID_REQUEST`） |
+| `profile` | 任意 | ログイン済みプロファイル名。キーに許可され、設定 JSON の `profiles` に登録済みで、`/login` で保存済みのものだけ使えます。`url` はそのプロファイルの許可ドメイン内であること。取得中に許可ドメイン外へ画面遷移（リダイレクトを含む）すると `FORBIDDEN_DOMAIN` になり、内容は返りません |
 | `timeout_ms` | 任意 | タイムアウト（1000〜60000、既定 30000） |
 | `full_page` | 任意 | `true` でスクリーンショットをページ全体にする |
 
@@ -105,19 +108,19 @@ CSS セレクタ（要素の指定方法。例: `h1`、`.price`）以外の指�
 | code | HTTP | 意味・主な原因 |
 |---|---|---|
 | `UNAUTHORIZED` | 401 | APIキーがない・誤り・失効済み。発行直後なら反映待ち（最大10秒） |
-| `FORBIDDEN_PROFILE` | 403 | そのキーに許可されていないプロファイルを指定した（Phase 4 向け） |
-| `FORBIDDEN_DOMAIN` | 403 | そのプロファイルで許可されていないドメインを指定した（Phase 4 向け） |
+| `FORBIDDEN_PROFILE` | 403 | そのキーに許可されていない、または設定 JSON に登録されていないプロファイルを指定した |
+| `FORBIDDEN_DOMAIN` | 403 | そのプロファイルで許可されていないドメインを指定した、または取得中に許可ドメイン外へ遷移した |
 | `BLOCKED_URL` | 400 | 取得してはいけない宛先（社内向けアドレス、http/https 以外、80/443 以外のポート等）。SSRF 対策で拒否 |
-| `INVALID_REQUEST` | 400 | リクエストの形式不正（項目名の誤り、`outputs` の値不正、`profile` 指定等）。本文が大きすぎる場合は 413、存在しないパスは 404 で、いずれも本コード |
-| `PROFILE_NOT_FOUND` | 404 | 指定プロファイルが存在しない（Phase 4 向け） |
-| `SESSION_EXPIRED` | 409 | ログインの有効期限切れ（Phase 4 向け） |
-| `PROFILE_BUSY` | 409 | 同じプロファイルが使用中（Phase 4 向け） |
+| `INVALID_REQUEST` | 400 | リクエストの形式不正（項目名の誤り、`outputs` の値不正等）。本文が大きすぎる場合は 413、存在しないパスは 404 で、いずれも本コード |
+| `PROFILE_NOT_FOUND` | 404 | 設定に登録済みだが、ログインの保存データがまだ無い（`/login` でログインして保存する） |
+| `SESSION_EXPIRED` | 409 | ログインの有効期限切れ（未実装。現状は、ログイン切れでもログイン画面の内容が正常結果として返ります） |
+| `PROFILE_BUSY` | 409 | 同じプロファイルが使用中（取得側では未実装。ログイン画面が別プロファイルで使用中のときに発生） |
 | `RESPONSE_TOO_LARGE` | 413 | 取得結果が大きすぎる（既定 24MB 上限） |
 | `NAVIGATION_FAILED` | 502 | ページを開けなかった（接続失敗、上流プロキシの異常等） |
 | `TIMEOUT` | 504 | 時間内にページの読み込みや操作が終わらなかった |
-| `INTERNAL_ERROR` | 500 | サーバー内部の予期せぬエラー |
+| `INTERNAL_ERROR` | 500 | サーバー内部の予期せぬエラー。プロファイル関連では、保存データの復号失敗・破損、保存先（GCS）の読み取り失敗、プロファイル機能が未設定のサーバー（メッセージに原因の種類のみ。鍵や中身は出ません） |
 
-コードと HTTP ステータスの対応はソース（`src/lib/errors.ts`）で確認した内容です。`profile` 関連の4コードは Phase 4 の実装までは通常発生しません。未確認: 本番での各エラーの実機再現は `UNAUTHORIZED` 等の一部のみです。
+コードと HTTP ステータスの対応はソース（`src/lib/errors.ts`）で確認した内容です。未確認: 本番での各エラーの実機再現は `UNAUTHORIZED` 等の一部のみです（`profile` 関連はローカルのみ確認）。
 
 ### curl の例
 
@@ -141,7 +144,7 @@ make down     # 停止
 - api: http://localhost:8080/healthz
 - login: http://localhost:8081/healthz
 - ログイン画面: http://localhost:8081/login?profile=<名前>（`localhost` で開くこと。`127.0.0.1` では開けません）。`config/local.json` の `profiles` に登録済みの名前だけ開けます。`make up` は `.env` に暗号鍵・許可メール・フェイクOAuth（`OAUTH_FAKE=1`。Google の代わりにメールアドレスを入力するローカル専用画面）を不足分だけ追記します。実際の Google OAuth を試すときは `OAUTH_FAKE` を空にして `OAUTH_CLIENT_JSON` を設定します。
-- 保存したプロファイルはローカルでは Docker ボリューム `login-profiles`（`/data/profiles`）に暗号化されて保存されます。
+- 保存したプロファイルはローカルでは Docker ボリューム `login-profiles`（`/data/profiles`）に暗号化されて保存されます。取得用（api）も同じボリュームを読み取り専用で参照します。ローカルで `profile` 指定の取得を試すには、`make keys-grant ID=<名前> PROFILE=<プロファイル名>` でキーに許可を付けてください。
 - 設定は `config/local.json`（Git 管理外）。変更は再起動なしで反映されます。
 - ローカルのキー操作: `make keys-add ID=<名前>`（平文は一度だけ表示。`.env` など Git 管理外に保存）、`make keys-list`、`make keys-revoke ID=<名前>`。
 - `make test`（単体・結合）、`make lint`、`make typecheck`。すべて Docker 内で実行します。
@@ -186,6 +189,7 @@ make down     # 停止
 6. `https://<login の公開URL>/login?profile=<名前>` を開く（プロファイル名は設定 JSON の `profiles` に登録済みであること。`make config-push` / `prod-config-push` で反映）。Google でログイン後、noVNC 上のブラウザで対象サイトにログインし、「保存して終了」を押す。
 - 保存されるのは、そのプロファイルの `allowed_domains`（許可ドメイン）に属する Cookie と localStorage だけです（それ以外は破棄）。`allowed_domains` が空のプロファイルは保存できません。
 - 暗号鍵を変更・紛失すると保存済みプロファイルは復号できなくなります（再ログインで作り直し）。
+- 取得用（api）は、暗号鍵の読み取りとプロファイル用バケットの読み取り専用権限だけを持ちます（書き込み・削除は不可）。取得で更新された Cookie は保存されないため、サイト側のログイン期限が来たら `/login` から再ログインしてください。
 
 ## 6. セキュリティの考え方
 
@@ -205,6 +209,7 @@ make down     # 停止
 | `jq: command not found` | `prod-fetch` には `jq` が必要。インストールしてください |
 | `ID を指定してください` | 保存済みキーが複数ある場合は `ID=<名前>` が必要 |
 | `api_url を取得できません` | `gcloud` のログイン状態を確認するか、`API_URL=https://...` を指定 |
+| ログイン画面が 409（`PROFILE_BUSY`、「Another login session is in progress」） | 前のログインセッションが残っている。「保存して終了」「中止」を押さずにタブを閉じても、画面の接続が切れてから約 3 分（`LOGIN_DISCONNECT_GRACE_SECONDS`、既定 180 秒）で自動破棄されるため、待ってから `/login` を開き直す（3 分以内のリロード・再接続は同じ画面に戻れる。接続中の別タブがある場合はそちらで保存か中止）。保存の処理中は破棄されない。それでも直らないときは Cloud Run の新リビジョンを作って再起動する |
 | `/healthz` が 404 | Cloud Run の外部 URL では使えません（Google 側の予約パス） |
 | `既に存在します` | その ID のキーは発行済み。使い続けるか、`prod-keys-revoke` で失効してから再発行 |
 
@@ -217,9 +222,9 @@ make down     # 停止
 | `make init` / `build` | 初期設定とイメージのビルド |
 | `make up` / `down` / `restart` / `ps` / `logs` / `shell` | ローカルの起動・停止・確認 |
 | `make lint` / `typecheck` / `test` / `test-unit` / `format` | 検証・整形（Docker 内） |
-| `make keys-add` / `keys-list` / `keys-revoke` | ローカルのキー管理 |
-| `make prod-keys-add` / `prod-keys-list` / `prod-keys-revoke` | 本番のキー管理 |
-| `make prod-fetch URL=...` | 本番で取得を試す |
+| `make keys-add` / `keys-grant` / `keys-list` / `keys-revoke` | ローカルのキー管理 |
+| `make prod-keys-add` / `prod-keys-grant` / `prod-keys-list` / `prod-keys-revoke` | 本番のキー管理 |
+| `make prod-fetch URL=... [PROFILE=...]` | 本番で取得を試す |
 | `make infra-init` / `infra-fmt` / `infra-validate` / `infra-plan` / `infra-apply` | Terraform |
 | `make config-push` | `config/local.json` を本番の設定として登録 |
 | `make deploy` | GitHub Actions のデプロイを手動起動 |
