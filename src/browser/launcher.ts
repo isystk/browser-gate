@@ -3,8 +3,9 @@ import { type Browser, chromium } from 'playwright';
 const START_URL = 'about:blank';
 const LOOPBACK_HOST = '127.0.0.1';
 
-// コンテナ内ではユーザー名前空間が使えないため --no-sandbox が必要
-const BASE_ARGS = ['--no-sandbox'];
+// コンテナ内ではユーザー名前空間が使えないため --no-sandbox が必要。
+// Cloud Run の /dev/shm は小さいため --disable-dev-shm-usage で /tmp を使わせる。
+const BASE_ARGS = ['--no-sandbox', '--disable-dev-shm-usage', '--lang=ja-JP'];
 
 /** ヘッドフル Chromium を Xvfb 上に起動し、noVNC から操作できる状態にする。 */
 export async function launchHeadfulBrowser(): Promise<void> {

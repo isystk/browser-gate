@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 
 import { z } from 'zod';
 
@@ -30,6 +30,8 @@ export interface AppConfig {
 
 export type ConfigProvider = () => Promise<AppConfig>;
 
+const CONFIG_RELOAD_INTERVAL_MS = 10_000;
+
 /** Validates raw JSON as an AppConfig and throws with the offending path on failure. */
 export function parseAppConfig(raw: unknown): AppConfig {
   const result = appConfigSchema.safeParse(raw);
@@ -45,19 +47,23 @@ export async function loadConfigFile(path: string): Promise<AppConfig> {
   return parseAppConfig(JSON.parse(await readFile(path, 'utf8')));
 }
 
-/** Creates a provider that re-reads the file when it changes, so key revocation takes effect without restart. */
+/**
+ * Creates a provider that re-reads the file at most every CONFIG_RELOAD_INTERVAL_MS, so key revocation
+ * takes effect without restart. Time-based (not mtime-based) because a Secret Manager volume on Cloud Run
+ * does not guarantee a changing mtime. A failed reload keeps the last valid config.
+ */
 export async function createFileConfigProvider(
   path: string,
   onReloadError: (error: unknown) => void,
+  now: () => number = Date.now,
 ): Promise<ConfigProvider> {
   let current = await loadConfigFile(path);
-  let loadedMtimeMs = (await stat(path)).mtimeMs;
+  let loadedAtMs = now();
   return async () => {
+    if (now() - loadedAtMs < CONFIG_RELOAD_INTERVAL_MS) return current;
+    loadedAtMs = now();
     try {
-      const mtimeMs = (await stat(path)).mtimeMs;
-      if (mtimeMs === loadedMtimeMs) return current;
       current = await loadConfigFile(path);
-      loadedMtimeMs = mtimeMs;
     } catch (error) {
       onReloadError(error);
     }

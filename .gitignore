@@ -2,5 +2,13 @@ node_modules/
 dist/
 .env
 config/local.json
+config/prod.json
 *.log
 .serena/
+infra/.terraform/
+infra/terraform.tfvars
+infra/*.tfstate
+infra/*.tfstate.*
+infra/crash.log
+infra/tfplan
+screenshot*.png

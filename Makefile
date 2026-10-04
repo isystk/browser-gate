@@ -3,7 +3,18 @@ SHELL := /bin/bash
 
 DOCKER_CMD := docker compose
 NPM_RUN := $(DOCKER_CMD) run --rm --no-deps --entrypoint npm api
+TF_RUN := $(DOCKER_CMD) run --rm --user $$(id -u):$$(id -g) terraform
+GCP_PROJECT ?= isystk
+GCP_REGION ?= asia-northeast1
+CONFIG_SECRET := browser-gate-config
 KEYS_RUN := $(DOCKER_CMD) run --rm --no-deps --user $$(id -u):$$(id -g) -e HOME=/tmp keys
+# 本番用: config/prod.json を対象にする。出力を変数へ取り込むため -T（TTY なし）にする。
+PROD_KEYS_RUN := $(DOCKER_CMD) run --rm -T --no-deps --user $$(id -u):$$(id -g) -e HOME=/tmp -e CONFIG_PATH=/app/config/prod.json keys
+# 本番キーの保存先（リポジトリ外・Git に入らない。1キー1ファイル <ID>.key、権限 600 / ディレクトリ 700）
+PROD_KEY_DIR ?= $(HOME)/.config/browser-gate/prod-keys
+RUN_SERVICE := browser-gate-api
+# ID の検証（パス操作や意図しない文字を拒否）
+CHECK_ID = case "$$ID" in ''|*[!A-Za-z0-9_-]*) echo "ID を指定してください（英数字・-・_ のみ。例: ID=musashi）"; exit 1;; esac
 
 .DEFAULT_GOAL := help
 
@@ -75,6 +86,105 @@ keys-revoke: ## APIキーを失効します（例: make keys-revoke ID=musashi�
 	@test -n "$(ID)" || { echo "ID を指定してください（例: make keys-revoke ID=musashi）"; exit 1; }
 	$(KEYS_RUN) revoke --id "$(ID)"
 
+.PHONY: prod-config-pull
+prod-config-pull: ## 本番の最新設定JSONを config/prod.json に取得します（読み取りのみ。権限600）。
+	@umask 077; gcloud secrets versions access latest --secret $(CONFIG_SECRET) --project $(GCP_PROJECT) > config/prod.json
+	@chmod 600 config/prod.json
+	@echo "config/prod.json を最新化しました"
+
+.PHONY: prod-config-push
+prod-config-push: ## config/prod.json を本番の設定JSONとして新バージョン登録します（本番反映）。
+	@test -f config/prod.json || { echo "config/prod.json がありません"; exit 1; }
+	gcloud secrets versions add $(CONFIG_SECRET) --project $(GCP_PROJECT) --data-file=config/prod.json
+
+.PHONY: prod-keys-add
+prod-keys-add: ## 本番APIキーを発行して反映します（例: make prod-keys-add ID=musashi。キーは画面に出さず ~/.config/browser-gate/prod-keys に保存）。
+	@$(CHECK_ID); \
+	f="$(PROD_KEY_DIR)/$$ID.key"; \
+	test ! -e "$$f" || { echo "$$f は既に存在します（失効してから再発行してください）"; exit 1; }; \
+	umask 077; mkdir -p "$(PROD_KEY_DIR)"; chmod 700 "$(PROD_KEY_DIR)"; \
+	$(MAKE) --no-print-directory prod-config-pull; \
+	out="$$($(PROD_KEYS_RUN) add --id "$$ID" | tr -d '\r')"; \
+	key="$$(printf '%s\n' "$$out" | grep -E '^bg_[A-Za-z0-9_-]+$$' | head -n 1 || true)"; \
+	test -n "$$key" || { echo "キーの発行結果を取得できませんでした（config/prod.json を確認してください。本番へは未反映）"; exit 1; }; \
+	printf '%s\n' "$$key" > "$$f"; chmod 600 "$$f"; unset key out; \
+	echo "キーを $$f に保存しました。本番へ反映します..."; \
+	$(MAKE) --no-print-directory prod-config-push || { echo "反映に失敗しました。make prod-config-push で再実行してください（キーは保存済み）"; exit 1; }; \
+	echo "完了: ID=$$ID（反映まで最大10秒）"
+
+.PHONY: prod-keys-list
+prod-keys-list: ## 保存済みの本番キーのIDを一覧表示します（キー本体は表示しません）。
+	@if ls "$(PROD_KEY_DIR)"/*.key >/dev/null 2>&1; then \
+		for f in "$(PROD_KEY_DIR)"/*.key; do printf '%-20s %s\n' "$$(basename "$$f" .key)" "$$(date -r "$$f" '+%Y-%m-%d %H:%M')"; done; \
+	else echo "保存済みキーはありません（$(PROD_KEY_DIR)）"; fi
+
+.PHONY: prod-keys-revoke
+prod-keys-revoke: ## 本番APIキーを失効して反映し、保存済みキーも削除します（例: make prod-keys-revoke ID=musashi）。
+	@$(CHECK_ID); \
+	$(MAKE) --no-print-directory prod-config-pull; \
+	$(PROD_KEYS_RUN) revoke --id "$$ID"; \
+	$(MAKE) --no-print-directory prod-config-push; \
+	rm -f "$(PROD_KEY_DIR)/$$ID.key"; \
+	echo "完了: ID=$$ID を失効しました（反映まで最大10秒）"
+
+.PHONY: prod-fetch
+prod-fetch: ## 本番 /fetch を実行します（例: make prod-fetch URL=https://example.com/ [OUT=text|html|screenshot] [ID=musashi] [FILE=out.png] [API_URL=...]）。
+	@test -n "$${URL:-}" || { echo "URL を指定してください（例: make prod-fetch URL=https://example.com/）"; exit 1; }; \
+	out="$${OUT:-text}"; \
+	case "$$out" in text|html|screenshot) ;; *) echo "OUT は text / html / screenshot のいずれかです"; exit 1;; esac; \
+	if [ -z "$${ID:-}" ]; then \
+		set -- "$(PROD_KEY_DIR)"/*.key; \
+		if [ $$# -eq 1 ] && [ -f "$$1" ]; then ID="$$(basename "$$1" .key)"; \
+		else echo "ID を指定してください（make prod-keys-list で確認。保存キーが1つだけの場合のみ省略可）"; exit 1; fi; \
+	fi; \
+	$(CHECK_ID); \
+	f="$(PROD_KEY_DIR)/$$ID.key"; \
+	test -f "$$f" || { echo "$$f がありません（make prod-keys-add ID=$$ID）"; exit 1; }; \
+	base="$${API_URL:-$$($(TF_RUN) output -raw api_url 2>/dev/null | tr -d '\r' || true)}"; \
+	[ -n "$$base" ] || base="$$(gcloud run services describe $(RUN_SERVICE) --region $(GCP_REGION) --project $(GCP_PROJECT) --format 'value(status.url)')"; \
+	[ -n "$$base" ] || { echo "api_url を取得できません（API_URL=https://... を指定してください）"; exit 1; }; \
+	body="$$(jq -cn --arg url "$$URL" --arg o "$$out" '{url:$$url, outputs:[$$o]}')"; \
+	res="$$(printf 'Authorization: Bearer %s\n' "$$(cat "$$f")" | curl -sS -m 90 -X POST "$$base/fetch" -H @- -H 'Content-Type: application/json' -d "$$body")"; \
+	if [ "$$out" = screenshot ]; then \
+		dest="$${FILE:-screenshot.png}"; \
+		printf '%s' "$$res" | jq -er '.screenshot' | base64 -d > "$$dest" || { echo "取得に失敗しました:"; printf '%s\n' "$$res" | jq . 2>/dev/null || printf '%s\n' "$$res"; rm -f "$$dest"; exit 1; }; \
+		echo "保存しました: $$dest"; \
+	else \
+		val="$$(printf '%s' "$$res" | jq -er ".$$out" 2>/dev/null)" || { echo "取得に失敗しました:"; printf '%s\n' "$$res" | jq . 2>/dev/null || printf '%s\n' "$$res"; exit 1; }; \
+		if [ -n "$${FILE:-}" ]; then printf '%s\n' "$$val" > "$$FILE"; echo "保存しました: $$FILE"; else printf '%s\n' "$$val"; fi; \
+	fi
+
 .PHONY: format
 format: build ## Prettier で src / test を整形します。
 	$(DOCKER_CMD) run --rm --no-deps --user $$(id -u):$$(id -g) -e HOME=/tmp -v $(CURDIR)/src:/app/src -v $(CURDIR)/test:/app/test --entrypoint npx api prettier --write src test
+
+.PHONY: infra-init
+infra-init: ## Terraform を初期化します（state 用 GCS バケットに接続）。
+	$(TF_RUN) init
+
+.PHONY: infra-fmt
+infra-fmt: ## Terraform ファイルを整形します。
+	$(TF_RUN) fmt
+
+.PHONY: infra-validate
+infra-validate: infra-init ## Terraform の構文を検証します。
+	$(TF_RUN) validate
+
+.PHONY: infra-plan
+infra-plan: infra-init ## Terraform の変更内容を確認します。
+	$(TF_RUN) plan
+
+.PHONY: infra-apply
+infra-apply: infra-init ## Terraform の変更を反映します（確認プロンプトあり。実リソースを変更）。
+	$(DOCKER_CMD) run --rm -it --user $$(id -u):$$(id -g) terraform apply
+
+.PHONY: config-push
+config-push: ## config/local.json を Secret Manager の設定JSONとして新バージョン登録します（本番反映）。
+	@test -f config/local.json || { echo "config/local.json がありません"; exit 1; }
+	gcloud secrets versions add $(CONFIG_SECRET) --project $(GCP_PROJECT) --data-file=config/local.json
+
+.PHONY: deploy
+deploy: ## GitHub Actions のデプロイを手動起動し、完了まで表示します。
+	gh workflow run deploy.yml --ref main
+	@sleep 5
+	gh run watch "$$(gh run list --workflow=deploy.yml --limit 1 --json databaseId --jq '.[0].databaseId')" --exit-status

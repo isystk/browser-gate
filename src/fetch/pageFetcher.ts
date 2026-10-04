@@ -88,6 +88,7 @@ async function newGuardedContext(
 ): Promise<BrowserContext> {
   const context = await browser.newContext({
     viewport: VIEWPORT,
+    locale: 'ja-JP',
     serviceWorkers: 'block',
     acceptDownloads: false,
   });
