@@ -8,6 +8,8 @@ export interface EgressPolicy {
   allowedPorts: readonly number[];
   /** "ip:port" 形式の例外。本番の配線では使わず、テストからのみ注入する。 */
   exemptTargets: readonly string[];
+  /** true なら、名前解決した宛先の IPv4 アドレスを IPv6 より先に試す（IPv4 が無い宛先は IPv6 へ）。検査の対象は変わらない。 */
+  preferIpv4?: boolean;
 }
 
 export const DEFAULT_EGRESS_POLICY: EgressPolicy = {

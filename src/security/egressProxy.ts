@@ -118,7 +118,15 @@ export async function resolveAllowedAddresses(
   if (net.isIP(host) !== 0) return [host];
   const addresses = await resolve(host);
   addresses.forEach((address) => assertAllowed(address, target.port, policy));
-  return addresses;
+  return policy.preferIpv4 === true ? ipv4First(addresses) : addresses;
+}
+
+/** Moves IPv4 addresses before IPv6 ones, keeping the order within each family. */
+function ipv4First(addresses: readonly string[]): string[] {
+  return [
+    ...addresses.filter((address) => net.isIPv4(address)),
+    ...addresses.filter((address) => !net.isIPv4(address)),
+  ];
 }
 
 interface ProxyContext {

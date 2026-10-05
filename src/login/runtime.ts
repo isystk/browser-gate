@@ -18,7 +18,7 @@ import {
   LocalObjectStore,
   ProfileStore,
 } from '../profile/store.js';
-import { DEFAULT_EGRESS_POLICY } from '../security/urlGuard.js';
+import { egressPolicyFromEnv } from '../config/egressEnv.js';
 import { createFakeGoogle } from './fakeGoogle.js';
 import { LoginService } from './loginService.js';
 import { LoginSessionManager } from './loginSessionManager.js';
@@ -131,7 +131,7 @@ function createSessionManager(
   logger: Logger,
 ): LoginSessionManager | PlainLoginSessionManager {
   const options = {
-    policy: DEFAULT_EGRESS_POLICY,
+    policy: egressPolicyFromEnv(),
     maxLifetimeMs: LOGIN_SESSION_MAX_LIFETIME_MS,
     disconnectGraceMs: env.disconnectGraceMs,
     logger,
