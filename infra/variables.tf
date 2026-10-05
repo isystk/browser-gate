@@ -57,6 +57,12 @@ variable "login_browser_mode" {
   }
 }
 
+variable "egress_prefer_ipv4" {
+  description = "true にすると、api / login の中継プロキシが宛先の IPv4 アドレスを IPv6 より先に試す（IPv6 の評価が低く Cloudflare のチャレンジを通れない場合の切り分け用）。既定は従来どおり"
+  type        = bool
+  default     = false
+}
+
 variable "login_allowed_emails" {
   description = "ログイン画面（/login）に入れる Google アカウントのメールアドレス"
   type        = list(string)

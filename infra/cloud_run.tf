@@ -38,6 +38,11 @@ resource "google_cloud_run_v2_service" "api" {
         name  = "MODE"
         value = "api"
       }
+      # 宛先の IPv4 を IPv6 より先に試す（切り分け用。既定 false は従来どおり）
+      env {
+        name  = "EGRESS_PREFER_IPV4"
+        value = var.egress_prefer_ipv4 ? "true" : ""
+      }
       env {
         name  = "CONFIG_PATH"
         value = local.config_mount_path
@@ -137,6 +142,11 @@ resource "google_cloud_run_v2_service" "login" {
       env {
         name  = "MODE"
         value = "login"
+      }
+      # 宛先の IPv4 を IPv6 より先に試す（切り分け用。既定 false は従来どおり）
+      env {
+        name  = "EGRESS_PREFER_IPV4"
+        value = var.egress_prefer_ipv4 ? "true" : ""
       }
       env {
         name  = "CONFIG_PATH"

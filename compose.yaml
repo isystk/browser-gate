@@ -13,6 +13,7 @@ services:
     environment:
       MODE: api
       CONFIG_PATH: /app/config/local.json
+      EGRESS_PREFER_IPV4: ${EGRESS_PREFER_IPV4:-}
       # ログイン済みプロファイルの読み取り用（login が保存したものを読み取り専用で参照する）
       PROFILE_ENCRYPTION_KEY: ${PROFILE_ENCRYPTION_KEY:-}
       PROFILE_STORE_DIR: /data/profiles
@@ -28,6 +29,7 @@ services:
     environment:
       MODE: login
       CONFIG_PATH: /app/config/local.json
+      EGRESS_PREFER_IPV4: ${EGRESS_PREFER_IPV4:-}
       PUBLIC_BASE_URL: http://localhost:${LOGIN_HOST_PORT:-8081}
       ALLOWED_EMAILS: ${ALLOWED_EMAILS:-}
       PROFILE_ENCRYPTION_KEY: ${PROFILE_ENCRYPTION_KEY:-}

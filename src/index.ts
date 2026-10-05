@@ -19,7 +19,7 @@ import {
   LocalObjectStore,
   ProfileStore,
 } from './profile/store.js';
-import { DEFAULT_EGRESS_POLICY } from './security/urlGuard.js';
+import { egressPolicyFromEnv } from './config/egressEnv.js';
 
 const env = loadEnv();
 const logger = createLogger();
@@ -56,7 +56,7 @@ function createConfigProvider(): Promise<ConfigProvider> {
 function createFetchService(): FetchService {
   return new FetchService({
     getConfig,
-    policy: DEFAULT_EGRESS_POLICY,
+    policy: egressPolicyFromEnv(),
     maxResponseBytes: env.maxResponseBytes,
     logger,
     profiles: createProfileLoader(loadProfileEnv()),

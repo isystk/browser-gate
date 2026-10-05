@@ -83,6 +83,10 @@ make prod-keys-grant ID=<名前> PROFILE=<プロファイル名>   # 既存キ�
 | `timeout_ms` | 任意 | タイムアウト（1000〜60000、既定 30000） |
 | `full_page` | 任意 | `true` でスクリーンショットをページ全体にする |
 
+環境変数 `EGRESS_PREFER_IPV4=true`（Terraform は `egress_prefer_ipv4`）で、宛先の IPv4 アドレスを IPv6 より先に試す（既定は従来どおり。IPv6 だと Cloudflare のチャレンジを通れない場合の切り分け用）。
+
+SPA サイト（Feedly など）は描画が遅いため、`steps` の `wait_for` で主要な要素を待ち、`timeout_ms` も長めにする（待たないと読み込み失敗の画面が返ることがある）。
+
 CSS セレクタ（要素の指定方法。例: `h1`、`.price`）以外の指定（`xpath=` や `>>` 連結など）は拒否されます。未知の項目名を送るとエラーになります。リクエスト本文は 64KB までです。
 
 ### レスポンス例（成功）
