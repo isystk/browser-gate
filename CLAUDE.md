@@ -1,6 +1,6 @@
 # browser-gate
 
-Cloud Run 上のヘッドフル Chromium + noVNC による汎用ブラウザ取得API。要件・実装計画は isystk-biz-ops の `projects/browser-gate/cto/成果物/` を参照する。
+ヘッドフル Chromium + noVNC による汎用ブラウザ取得API（ローカル Docker 専用）。使い方と仕様は README.md を参照する。
 
 ## ルール
 

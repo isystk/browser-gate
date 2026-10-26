@@ -65,22 +65,6 @@ services:
       - keys
       - --
 
-  # Terraform 実行用（make infra-* から実行。通常の up では起動しない）。
-  # ホストの ADC（gcloud auth application-default login）を読み取り専用でマウントする。
-  terraform:
-    image: hashicorp/terraform:1.13
-    profiles:
-      - tools
-    working_dir: /infra
-    entrypoint:
-      - terraform
-    environment:
-      HOME: /tmp
-      GOOGLE_APPLICATION_CREDENTIALS: /gcloud/application_default_credentials.json
-    volumes:
-      - ./infra:/infra
-      - ${HOME}/.config/gcloud/application_default_credentials.json:/gcloud/application_default_credentials.json:ro
-
 volumes:
   # ローカルの暗号化済みプロファイル置き場（削除しない）
   login-profiles:
