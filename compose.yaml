@@ -65,6 +65,24 @@ services:
       - keys
       - --
 
+  # MCP サーバー用（stdio）。docker compose run --rm -T mcp で起動し、make up では起動しない
+  mcp:
+    <<: *browser-gate
+    profiles:
+      - mcp
+    restart: "no"
+    command:
+      - node
+      - dist/mcp/index.js
+    stdin_open: true
+    # イメージの HEALTHCHECK は 8080 用で MCP には合わないため無効化する
+    healthcheck:
+      disable: true
+    environment:
+      - BROWSER_GATE_URL=http://api:8080
+      # キーはクライアント側の環境変数から引き継ぐ（値は compose に置かない）
+      - BROWSER_GATE_API_KEY
+
 volumes:
   # ローカルの暗号化済みプロファイル置き場（削除しない）
   login-profiles:

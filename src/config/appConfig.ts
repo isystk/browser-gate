@@ -15,6 +15,7 @@ const apiKeySchema = z.strictObject({
 
 const profileSchema = z.strictObject({
   allowed_domains: z.array(z.string().min(1)),
+  login_url_patterns: z.array(z.string().min(1)).optional(),
 });
 
 const appConfigSchema = z.strictObject({
@@ -25,7 +26,10 @@ const appConfigSchema = z.strictObject({
 /** 設定JSON（APIキーのハッシュ・プロファイル・許可ドメイン）。 */
 export interface AppConfig {
   api_keys: ApiKeyRecord[];
-  profiles: Record<string, { allowed_domains: string[] }>;
+  profiles: Record<
+    string,
+    { allowed_domains: string[]; login_url_patterns?: string[] }
+  >;
 }
 
 export type ConfigProvider = () => Promise<AppConfig>;

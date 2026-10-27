@@ -22,6 +22,7 @@ import {
   parseFetchRequest,
   resolveOutputs,
 } from './schema.js';
+import { isLoginUrl } from './sessionExpiry.js';
 
 export type PageFetcher = (input: PageFetchInput) => Promise<PageFetchResult>;
 
@@ -121,6 +122,12 @@ export class FetchService {
       ...toPageInput(request, url.href, upstream),
       session,
     });
+    assertSessionNotExpired(
+      result.finalUrl,
+      request.profile === undefined
+        ? undefined
+        : config.profiles[request.profile]?.login_url_patterns,
+    );
     const { finalUrl, ...outputs } = result;
     return {
       ok: true,
@@ -163,6 +170,19 @@ export class FetchService {
       error_name: error instanceof Error ? error.name : 'unknown',
     });
   }
+}
+
+/** Throws SESSION_EXPIRED if the final URL is a login page for the profile. */
+function assertSessionNotExpired(
+  finalUrl: string,
+  patterns: readonly string[] | undefined,
+): void {
+  if (patterns === undefined) return;
+  if (!isLoginUrl(finalUrl, patterns)) return;
+  throw new AppError(
+    'SESSION_EXPIRED',
+    'The saved login has expired. Log in again from the login page',
+  );
 }
 
 function parseJson(rawBody: string): unknown {

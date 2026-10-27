@@ -43,35 +43,47 @@ const proxySchema = z.strictObject({
   password: z.string().max(MAX_CREDENTIAL_LENGTH).optional(),
 });
 
+/** Raw field definitions shared with other schemas; proxy is excluded. */
+export const fetchRequestFields = {
+  url: z.string().min(1).max(MAX_URL_LENGTH),
+  profile: z.string().regex(ID_PATTERN).optional(),
+  outputs: z.array(z.enum(OUTPUT_KINDS)).max(OUTPUT_KINDS.length).optional(),
+  extract: z
+    .record(z.string().regex(EXTRACT_NAME_PATTERN), selectorSchema)
+    .refine((value) => Object.keys(value).length <= MAX_EXTRACT_ENTRIES)
+    .optional(),
+  steps: z.array(stepSchema).max(MAX_STEPS).optional(),
+  timeout_ms: z
+    .number()
+    .int()
+    .min(MIN_TIMEOUT_MS)
+    .max(MAX_TIMEOUT_MS)
+    .optional(),
+  full_page: z.boolean().optional(),
+} satisfies z.ZodRawShape;
+
 const fetchRequestSchema = z
   .strictObject({
-    url: z.string().min(1).max(MAX_URL_LENGTH),
-    profile: z.string().regex(ID_PATTERN).optional(),
-    outputs: z.array(z.enum(OUTPUT_KINDS)).max(OUTPUT_KINDS.length).optional(),
-    extract: z
-      .record(z.string().regex(EXTRACT_NAME_PATTERN), selectorSchema)
-      .refine((value) => Object.keys(value).length <= MAX_EXTRACT_ENTRIES)
-      .optional(),
-    steps: z.array(stepSchema).max(MAX_STEPS).optional(),
+    ...fetchRequestFields,
     proxy: proxySchema.optional(),
-    timeout_ms: z
-      .number()
-      .int()
-      .min(MIN_TIMEOUT_MS)
-      .max(MAX_TIMEOUT_MS)
-      .optional(),
-    full_page: z.boolean().optional(),
   })
-  .refine(
-    (value) =>
-      value.outputs === undefined ||
-      value.outputs.length > 0 ||
-      value.extract !== undefined,
-  );
+  .refine(hasOutputsOrExtract);
 
 export type FetchRequest = z.infer<typeof fetchRequestSchema>;
 export type FetchStep = z.infer<typeof stepSchema>;
 export type OutputKind = (typeof OUTPUT_KINDS)[number];
+
+/** Returns true if outputs is omitted or non-empty, or extract is given. */
+export function hasOutputsOrExtract(value: {
+  outputs?: readonly string[];
+  extract?: unknown;
+}): boolean {
+  return (
+    value.outputs === undefined ||
+    value.outputs.length > 0 ||
+    value.extract !== undefined
+  );
+}
 
 /** Validates an untrusted request body and throws INVALID_REQUEST without echoing submitted values. */
 export function parseFetchRequest(raw: unknown): FetchRequest {

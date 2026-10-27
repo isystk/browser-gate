@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseFetchRequest } from '../../src/fetch/schema.js';
+import {
+  fetchRequestFields,
+  hasOutputsOrExtract,
+  parseFetchRequest,
+} from '../../src/fetch/schema.js';
 import { AppError } from '../../src/lib/errors.js';
 
 function invalid(input: unknown): void {
@@ -127,5 +131,27 @@ describe('parseFetchRequest', () => {
     } catch (error) {
       expect((error as AppError).message).not.toContain('SECRET-MARKER');
     }
+  });
+});
+
+describe('fetchRequestFields', () => {
+  it('does not include proxy', () => {
+    expect(Object.keys(fetchRequestFields)).not.toContain('proxy');
+  });
+});
+
+describe('hasOutputsOrExtract', () => {
+  it('returns true when outputs is omitted', () => {
+    expect(hasOutputsOrExtract({})).toBe(true);
+  });
+
+  it('returns false when outputs is empty and extract is absent', () => {
+    expect(hasOutputsOrExtract({ outputs: [] })).toBe(false);
+  });
+
+  it('returns true when outputs is empty and extract is present', () => {
+    expect(hasOutputsOrExtract({ outputs: [], extract: { title: 'h1' } })).toBe(
+      true,
+    );
   });
 });

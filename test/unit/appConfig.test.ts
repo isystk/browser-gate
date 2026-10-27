@@ -4,7 +4,10 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createFileConfigProvider } from '../../src/config/appConfig.js';
+import {
+  createFileConfigProvider,
+  parseAppConfig,
+} from '../../src/config/appConfig.js';
 
 const RELOAD_AFTER_MS = 10_000;
 
@@ -46,5 +49,48 @@ describe('createFileConfigProvider', () => {
     nowMs = RELOAD_AFTER_MS;
     expect((await provider()).api_keys).toEqual([]);
     expect(onError).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('parseAppConfig', () => {
+  it('accepts login_url_patterns for a profile', () => {
+    const config = parseAppConfig({
+      profiles: {
+        news: {
+          allowed_domains: ['example.com'],
+          login_url_patterns: ['/login', 'accounts.example.com'],
+        },
+      },
+    });
+
+    expect(config.profiles.news?.login_url_patterns).toEqual([
+      '/login',
+      'accounts.example.com',
+    ]);
+  });
+
+  it('treats login_url_patterns as optional', () => {
+    const config = parseAppConfig({
+      profiles: { news: { allowed_domains: ['example.com'] } },
+    });
+
+    expect(config.profiles.news?.login_url_patterns).toBeUndefined();
+  });
+
+  it.each([
+    ['an empty string', ['/login', '']],
+    ['a non-string element', ['/login', 1]],
+    ['a non-array value', '/login'],
+  ])('rejects %s in login_url_patterns', (_label, loginUrlPatterns) => {
+    expect(() =>
+      parseAppConfig({
+        profiles: {
+          news: {
+            allowed_domains: ['example.com'],
+            login_url_patterns: loginUrlPatterns,
+          },
+        },
+      }),
+    ).toThrow(/login_url_patterns/);
   });
 });
