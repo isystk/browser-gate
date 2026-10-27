@@ -12,7 +12,7 @@ Bot 対策（自動アクセスを弾く仕組み）が入った Web サイト�
 |---|---|
 | 匿名取得（ログインなしで URL を開き、本文・HTML・スクリーンショット・指定部分の抜き出しを返す） | 実装済み |
 | ログイン画面（noVNC で人が手動ログインし、Cookie 等を暗号化して保存） | 実装済み（ローカルで動作確認済み） |
-| ログイン済みプロファイルでの取得（`profile` 指定。保存済みの Cookie 等を復号して適用） | 実装済み（ローカルで動作確認済み）。取得後の Cookie 書き戻し・同時利用のロック・ログイン切れ検知と通知は未実装 |
+| ログイン済みプロファイルでの取得（`profile` 指定。保存済みの Cookie 等を復号して適用） | 実装済み（ローカルで動作確認済み）。ログイン切れ検知は `login_url_patterns` を設定したプロファイルのみ（「4. ローカルで動かす」参照）。取得後の Cookie 書き戻し・同時利用のロック・ログイン切れの通知は未実装 |
 
 AI エージェントからは MCP サーバー（`fetch_page` ツール）として使えます。詳しくは「5. MCP サーバーとして使う」を参照してください。
 
@@ -110,7 +110,7 @@ CSS セレクタ（要素の指定方法。例: `h1`、`.price`）以外の指�
 | `BLOCKED_URL` | 400 | 取得してはいけない宛先（社内向けアドレス、http/https 以外、80/443 以外のポート等）。SSRF 対策で拒否 |
 | `INVALID_REQUEST` | 400 | リクエストの形式不正（項目名の誤り、`outputs` の値不正等）。本文が大きすぎる場合は 413、存在しないパスは 404 で、いずれも本コード |
 | `PROFILE_NOT_FOUND` | 404 | 設定に登録済みだが、ログインの保存データがまだ無い（`/login` でログインして保存する） |
-| `SESSION_EXPIRED` | 409 | ログインの有効期限切れ（未実装。現状は、ログイン切れでもログイン画面の内容が正常結果として返ります） |
+| `SESSION_EXPIRED` | 409 | ログインの有効期限切れ。取得後の最終 URL が、プロファイルの `login_url_patterns` に一致したときに返ります（本文は返しません）。`login_url_patterns` を設定していないプロファイルでは検知されず、ログイン画面の内容が正常結果として返ります |
 | `PROFILE_BUSY` | 409 | 同じプロファイルが使用中（取得側では未実装。ログイン画面が別プロファイルで使用中のときに発生） |
 | `RESPONSE_TOO_LARGE` | 413 | 取得結果が大きすぎる（既定 24MB 上限） |
 | `NAVIGATION_FAILED` | 502 | ページを開けなかった（接続失敗、上流プロキシの異常等） |
@@ -132,6 +132,7 @@ make down     # 停止
 - login: http://localhost:8081/healthz
 - ログイン画面: http://localhost:8081/login?profile=<名前>（`localhost` で開くこと。`127.0.0.1` では開けません）。`config/local.json` の `profiles` に登録済みの名前だけ開けます。`make up` は `.env` に暗号鍵・許可メール・フェイクOAuth（`OAUTH_FAKE=1`。Google の代わりにメールアドレスを入力するローカル専用画面）を不足分だけ追記します。実際の Google OAuth を試すときは `OAUTH_FAKE` を空にして `OAUTH_CLIENT_JSON` を設定します。
 - 保存したプロファイルはローカルでは Docker ボリューム `login-profiles`（`/data/profiles`）に暗号化されて保存されます。取得用（api）も同じボリュームを読み取り専用で参照します。`profile` 指定の取得を試すには、`make keys-grant ID=<名前> PROFILE=<プロファイル名>` でキーに許可を付けてください。
+- ログイン切れの検知: `config/local.json` のプロファイルに任意項目 `login_url_patterns` を書くと、取得後の最終 URL が一致したとき `409 SESSION_EXPIRED` を返します（本文は返しません）。`/` で始まる要素はパスの前方一致（`/login` は `/login` と `/login/xxx` に一致し、`/loginfoo` には一致しません）、それ以外の要素はホスト一致（サブドメインを含む）です。例: `"profiles": {"feedly": {"allowed_domains": ["feedly.com"], "login_url_patterns": ["/login", "/i/welcome"]}}`。なお、許可ドメイン外のログイン画面（Google など）への遷移は、従来どおり `FORBIDDEN_DOMAIN` になります。
 - ログイン用ブラウザの方式は環境変数 `LOGIN_BROWSER_MODE` で切り替えます。既定（空）は従来の Playwright 方式。`plain` にすると、ログイン中は Playwright/CDP なしの素の Chromium を起動し（Cloudflare Turnstile 対策）、「保存して終了」でブラウザを閉じてから同じプロファイルを Playwright で開いて Cookie 等を取り込みます。`plain` では Chromium の管理ポリシー（`docker/chromium-policy.json`。セッション Cookie の保持、`file://` とダウンロードの禁止）がイメージに入り、人がブラウザを閉じてもセッションは残って「保存して終了」で保存できます。
 - 設定は `config/local.json`（Git 管理外）。変更は再起動なしで反映されます。
 - ローカルのキー操作: `make keys-add ID=<名前>`、`make keys-list`、`make keys-revoke ID=<名前>`。
@@ -192,9 +193,9 @@ BROWSER_GATE_API_KEY=<キー> node dist/mcp/index.js
 
 ### 制限と注意（第1弾）
 
-- **`profile` 指定時は読み取り専用**です。`profile` と `steps`（クリックなどの操作）は同時に指定できません（`INVALID_REQUEST`）。取得ページ内の指示によって、ログイン済みの権限で削除・購入・投稿などをエージェントに誘導されることを防ぐためです。`steps` は匿名取得でだけ使えます。
+- **`profile` 指定時の `steps` は `wait_for` と `scroll` だけ**です。`click` を含めると `INVALID_REQUEST` になります。取得ページ内の指示によって、ログイン済みの権限で削除・購入・投稿などをエージェントに誘導されることを防ぐためです。`click` を含むすべての `steps` は、匿名取得でだけ使えます。
 - 取得した内容は信頼できないデータです。エージェントがページ内の指示に従わないようにしてください。
-- ログイン切れは検知されません。期限が切れてもログイン画面が成功として返るため、`final_url` がログイン画面の URL でないか確認してください（「1. browser-gate とは」の未実装事項を参照）。
+- ログイン切れは、プロファイルに `login_url_patterns` を設定したときだけ `SESSION_EXPIRED` で検知されます（「4. ローカルで動かす」参照）。未設定のプロファイルでは、期限が切れてもログイン画面が成功として返るため、`final_url` がログイン画面の URL でないか確認してください。
 - `allowed_domains` は必要なドメインだけに絞ってください。同じプロファイルの同時利用ロックはありません。
 - ローカル利用が前提です（リモート公開はしません）。
 

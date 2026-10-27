@@ -96,10 +96,11 @@ describe('fetch_page tool definition', () => {
     );
   });
 
-  it('states that profile use is read-only and steps are unavailable', () => {
+  it('states that only wait_for and scroll steps are allowed with a profile', () => {
     const description = FETCH_PAGE_DESCRIPTION.toLowerCase();
-    expect(description).toContain('read-only');
-    expect(description).toContain('steps');
+    expect(description).toContain('wait_for');
+    expect(description).toContain('scroll');
+    expect(description).toContain('click');
   });
 });
 
@@ -119,19 +120,62 @@ describe('fetchPageInputShape', () => {
 });
 
 describe('createFetchPageHandler', () => {
-  it('rejects steps with profile without calling the API', async () => {
+  it('allows wait_for and scroll steps with a profile', async () => {
+    const { handler, fetchPage } = createFixture();
+    const steps = [{ wait_for: '#main' }, { scroll: 'bottom' }];
+
+    const result = await handler({ url: PAGE_URL, profile: PROFILE, steps });
+
+    expect(result.isError).toBeUndefined();
+    expect(fetchPage).toHaveBeenCalledWith({
+      url: PAGE_URL,
+      profile: PROFILE,
+      steps,
+      outputs: ['text'],
+    });
+  });
+
+  it('rejects click steps with a profile without calling the API', async () => {
     const { handler, fetchPage } = createFixture();
 
     const result = await handler({
       url: PAGE_URL,
       profile: PROFILE,
-      steps: [{ scroll: 'bottom' }],
+      steps: [{ click: '#delete' }],
     });
 
     expect(result.isError).toBe(true);
     expect(textContent(result)).toContain('INVALID_REQUEST');
-    expect(textContent(result)).toContain('steps');
+    expect(textContent(result)).toContain('click');
     expect(fetchPage).not.toHaveBeenCalled();
+  });
+
+  it('rejects mixed wait_for and click steps with a profile without calling the API', async () => {
+    const { handler, fetchPage } = createFixture();
+
+    const result = await handler({
+      url: PAGE_URL,
+      profile: PROFILE,
+      steps: [{ wait_for: '#main' }, { click: '#delete' }],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textContent(result)).toContain('INVALID_REQUEST');
+    expect(fetchPage).not.toHaveBeenCalled();
+  });
+
+  it('allows click steps without a profile', async () => {
+    const { handler, fetchPage } = createFixture();
+    const steps = [{ click: '#next' }];
+
+    const result = await handler({ url: PAGE_URL, steps });
+
+    expect(result.isError).toBeUndefined();
+    expect(fetchPage).toHaveBeenCalledWith({
+      url: PAGE_URL,
+      steps,
+      outputs: ['text'],
+    });
   });
 
   it('rejects empty outputs without extract without calling the API', async () => {

@@ -2,6 +2,11 @@ node_modules
 dist
 .git
 .env
+.env.*
 config/local.json
+config/prod.json
+.mcp.json
+*.pem
+*.key
 .claude
 *.log

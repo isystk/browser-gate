@@ -1,7 +1,16 @@
 node_modules/
 dist/
 .env
+.env.*
+!.env.example
 config/local.json
 config/prod.json
 *.log
 screenshot*.png
+# 秘密鍵・証明書・クライアント側 MCP 設定（API キーが入りうる）
+*.pem
+*.key
+.mcp.json
+# 個人用の Claude Code 設定
+.claude/settings.local.json
+CLAUDE.local.md

@@ -9,7 +9,7 @@ import {
   hashApiKey,
 } from '../../src/auth/apiKey.js';
 import type { AppConfig } from '../../src/config/appConfig.js';
-import { FetchService } from '../../src/fetch/service.js';
+import { FetchService, type PageFetcher } from '../../src/fetch/service.js';
 import { createLogger } from '../../src/lib/logger.js';
 import { ProfileLoader } from '../../src/profile/loader.js';
 import { type ObjectStore, ProfileStore } from '../../src/profile/store.js';
@@ -49,13 +49,17 @@ function record(
 
 const CONFIG: AppConfig = {
   api_keys: [
-    record('full', KEY, { profiles: ['news', 'member'] }),
+    record('full', KEY, { profiles: ['news', 'member', 'expiring'] }),
     record('anonymous-only', KEY_NO_PROFILE),
     record('revoked', KEY_REVOKED, { revoked_at: '2026-10-05T00:00:00.000Z' }),
   ],
   profiles: {
     news: { allowed_domains: ['example.com'] },
     member: { allowed_domains: ['127.0.0.1'] },
+    expiring: {
+      allowed_domains: ['127.0.0.1'],
+      login_url_patterns: ['/login'],
+    },
   },
 };
 
@@ -117,6 +121,7 @@ describe('POST /fetch', () => {
     maxResponseBytes: number,
     resolve?: (host: string) => Promise<string[]>,
     profiles?: ProfileLoader,
+    pageFetcher?: PageFetcher,
   ) {
     const logger = createLogger((line) => logLines.push(line));
     const service = new FetchService({
@@ -126,6 +131,7 @@ describe('POST /fetch', () => {
       logger,
       resolve,
       profiles,
+      pageFetcher,
     });
     const app = createApp('api', { fetchService: service, logger });
     return async (
@@ -552,6 +558,72 @@ describe('POST /fetch', () => {
       });
 
       expect(json.text).toContain('Please sign in');
+    });
+  });
+
+  describe('session expiry', () => {
+    const EXPIRING_PROFILE = 'expiring';
+    const LOGIN_TOKEN = 'SECRETQUERY';
+    let loginPageUrl: string;
+    let profileStore: ProfileStore;
+    let callWithProfiles: (body: unknown) => Promise<ApiResult>;
+
+    beforeAll(() => {
+      const objects = new MemoryObjectStore();
+      profileStore = new ProfileStore(objects, randomBytes(32));
+      loginPageUrl = `${web.origin}/login?token=${LOGIN_TOKEN}`;
+      const fetchLoginPage: PageFetcher = async () => ({
+        finalUrl: loginPageUrl,
+        status: 200,
+        text: 'Please sign in',
+      });
+      callWithProfiles = buildCaller(
+        policy,
+        SMALL_LIMIT_BYTES * 100,
+        undefined,
+        new ProfileLoader(profileStore),
+        fetchLoginPage,
+      );
+    });
+
+    it('returns SESSION_EXPIRED without the page body when the profile lands on the login page', async () => {
+      await profileStore.save(EXPIRING_PROFILE, sessionState('127.0.0.1'));
+
+      const { status, json } = await callWithProfiles({
+        url: `${web.origin}/whoami`,
+        profile: EXPIRING_PROFILE,
+        outputs: ['text'],
+      });
+
+      expect(status).toBe(409);
+      expect(json.error.code).toBe('SESSION_EXPIRED');
+      expect(json.text).toBeUndefined();
+    });
+
+    it('returns the fetched page for a profile without login_url_patterns', async () => {
+      await profileStore.save('member', sessionState('127.0.0.1'));
+
+      const { status, json } = await callWithProfiles({
+        url: `${web.origin}/whoami`,
+        profile: 'member',
+        outputs: ['text'],
+      });
+
+      expect(status).toBe(200);
+      expect(json).toMatchObject({ ok: true, final_url: loginPageUrl });
+    });
+
+    it('does not log the login URL query', async () => {
+      await profileStore.save(EXPIRING_PROFILE, sessionState('127.0.0.1'));
+      logLines.length = 0;
+
+      await callWithProfiles({
+        url: `${web.origin}/whoami`,
+        profile: EXPIRING_PROFILE,
+      });
+
+      expect(logLines.length).toBeGreaterThan(0);
+      expect(logLines.join('\n')).not.toContain(LOGIN_TOKEN);
     });
   });
 

@@ -109,7 +109,21 @@ describe('MCP server', () => {
     });
   });
 
-  it('rejects a profile with steps without calling the API', async () => {
+  it('rejects a profile with click steps without calling the API', async () => {
+    const result = await client.callTool({
+      name: FETCH_PAGE_TOOL_NAME,
+      arguments: {
+        url: PAGE_URL,
+        profile: 'member',
+        steps: [{ click: '#delete' }],
+      },
+    });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(api.requests).toEqual([]);
+  });
+
+  it('allows a profile with wait_for steps', async () => {
     const result = await client.callTool({
       name: FETCH_PAGE_TOOL_NAME,
       arguments: {
@@ -119,7 +133,14 @@ describe('MCP server', () => {
       },
     });
 
-    expect(result).toMatchObject({ isError: true });
-    expect(api.requests).toEqual([]);
+    expect(result).toMatchObject({
+      content: expect.arrayContaining([
+        { type: 'text', text: expect.stringContaining(PAGE_TEXT) },
+      ]),
+    });
+    expect(api.requests[0]).toMatchObject({
+      profile: 'member',
+      steps: [{ wait_for: 'article' }],
+    });
   });
 });
